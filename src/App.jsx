@@ -84,6 +84,7 @@ export default function App() {
           const approvedSnap = await getDoc(doc(db, 'approvedUsers', email))
           if (!approvedSnap.exists()) throw new Error('NOT_APPROVED')
           const approved = approvedSnap.data()
+          if (approved.status === 'inactive') throw new Error('Akses akaun anda telah dinyahaktifkan. Hubungi Super Admin.')
           if (!['student', 'admin'].includes(approved.role)) {
             throw new Error('Peranan akaun tidak sah. Hubungi Super Admin.')
           }
@@ -91,7 +92,7 @@ export default function App() {
           if (!userSnap.exists()) {
             await setDoc(userRef, {
               email, displayName: u.displayName || '', role: approved.role,
-              status: 'active', createdAt: serverTimestamp(), lastLoginAt: serverTimestamp(),
+              status: 'active', hostelIds: approved.hostelIds || [], createdAt: serverTimestamp(), lastLoginAt: serverTimestamp(),
             })
           } else {
             const current = userSnap.data()
@@ -100,7 +101,7 @@ export default function App() {
               // A role change must be applied by Super Admin to both whitelist and user profile.
               throw new Error('Peranan whitelist dan profil tidak sepadan. Minta Super Admin menyegerakkan peranan anda.')
             }
-            await updateDoc(userRef, { lastLoginAt: serverTimestamp() })
+            await updateDoc(userRef, { lastLoginAt: serverTimestamp(), ...(Array.isArray(approved.hostelIds) ? { hostelIds: approved.hostelIds } : {}) })
           }
         }
 
@@ -172,7 +173,7 @@ export default function App() {
 
         {activeModule === 'modules' ? (
           <>
-            {isAdmin && <AdminOverview />}
+            {isSuper && <AdminOverview />}
             <section>
               <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
                 <div><h3 className="section-title">Modul Hostel</h3><p className="muted mt-1">Pilih modul untuk membuka fungsi berkaitan.</p></div>
@@ -239,7 +240,7 @@ function HomeDashboard({ profile, isAdmin, isSuper, onBack }) {
           </div>
         </div>
       </section>
-      {isAdmin && <AdminOverview/>}
+      {isSuper && <AdminOverview/>}
       <section className="card">
         <h4 className="font-semibold text-navy">Makluman</h4>
         <p className="muted mt-2">Modul pengurusan lain akan diaktifkan secara berperingkat selepas fungsi, rekod data dan kawalan akses diuji.</p>
