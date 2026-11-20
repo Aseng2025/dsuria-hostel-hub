@@ -1,5 +1,5 @@
 export default {
-  content: ['./index.html', './src/**/*.{js,jsx}'],
-  theme: { extend: { colors: { navy: '#0f2747', teal: '#0d9488' } } },
+  content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
+  theme: { extend: { colors: { navy: '#10233f', teal: '#159b8b' } } },
   plugins: [],
 }
