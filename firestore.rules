@@ -46,6 +46,7 @@ service cloud.firestore {
           (isSuper() && request.resource.data.role == 'superadmin')
           || (
             exists(/databases/$(database)/documents/approvedUsers/$(email()))
+            && get(/databases/$(database)/documents/approvedUsers/$(email())).data.status != 'inactive'
             && request.resource.data.role ==
               get(/databases/$(database)/documents/approvedUsers/$(email())).data.role
             && request.resource.data.role in ['student', 'admin']
