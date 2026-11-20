@@ -402,126 +402,62 @@ function AdminOverview() {
 }
 
 function AdminManagement({ me, setNotice }) {
-  const [approved, setApproved] = useState([])
-  const [users, setUsers] = useState([])
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState('student')
-  const [message, setMessage] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    const unsubApproved = onSnapshot(collection(db, 'approvedUsers'), s =>
-      setApproved(s.docs.map(d => ({ id: d.id, ...d.data() }))),
-      e => setError(friendlyError(e)))
-    const unsubUsers = onSnapshot(collection(db, 'users'), s =>
-      setUsers(s.docs.map(d => ({ id: d.id, ...d.data() }))),
-      e => setError(friendlyError(e)))
-    return () => { unsubApproved(); unsubUsers() }
-  }, [])
-
-  const writeAudit = async (action, targetEmail, oldRole, newRole, reason = '') => {
-    await addDoc(collection(db, 'adminAuditLogs'), {
-      action, targetEmail, oldRole: oldRole || null, newRole: newRole || null,
-      reason, performedBy: me.uid, performedByEmail: me.email,
-      createdAt: serverTimestamp(),
-    })
+  const [approved,setApproved]=useState([]),[users,setUsers]=useState([]),[hostels,setHostels]=useState([])
+  const [email,setEmail]=useState(''),[role,setRole]=useState('admin'),[hostelIds,setHostelIds]=useState([])
+  const [hostelName,setHostelName]=useState(''),[editing,setEditing]=useState(null),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
+  useEffect(()=>{
+    const a=onSnapshot(collection(db,'approvedUsers'),s=>setApproved(s.docs.map(d=>({id:d.id,...d.data()}))),e=>setError(friendlyError(e)))
+    const u=onSnapshot(collection(db,'users'),s=>setUsers(s.docs.map(d=>({id:d.id,...d.data()}))),e=>setError(friendlyError(e)))
+    const h=onSnapshot(collection(db,'hostels'),s=>setHostels(s.docs.map(d=>({id:d.id,...d.data()}))),e=>setError(friendlyError(e)))
+    return ()=>{a();u();h()}
+  },[])
+  const audit=(action,targetEmail,oldRole=null,newRole=null,reason='')=>addDoc(collection(db,'adminAuditLogs'),{action,targetEmail,oldRole,newRole,reason,performedBy:me.uid,performedByEmail:me.email,createdAt:serverTimestamp()})
+  const saveAccess=async()=>{
+    const e=email.trim().toLowerCase()
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))return setMessage('Sila masukkan emel yang sah.')
+    if(e===SUPER_ADMIN_EMAIL)return setMessage('Emel Super Admin tidak boleh diubah.')
+    if(role==='admin'&&!hostelIds.length)return setMessage('Pilih sekurang-kurangnya satu hostel untuk Admin/Warden.')
+    setBusy(true);setError('')
+    try{
+      const old=approved.find(x=>x.id===e),match=users.find(x=>x.email?.toLowerCase()===e)
+      const data={role,status:'active',hostelIds:role==='admin'?hostelIds:[],addedBy:old?.addedBy||me.uid,addedAt:old?.addedAt||serverTimestamp(),updatedAt:serverTimestamp()}
+      await setDoc(doc(db,'approvedUsers',e),data,{merge:true})
+      if(match)await updateDoc(doc(db,'users',match.id),{role,status:'active',hostelIds:data.hostelIds,roleUpdatedAt:serverTimestamp()})
+      await audit(old?'ACCESS_UPDATED':'ACCESS_GRANTED',e,old?.role||null,role,'Hostel IDs: '+data.hostelIds.join(', '))
+      setMessage('Akses '+e+' berjaya disimpan.');setEmail('');setHostelIds([]);setNotice('Akses pengguna dikemas kini.')
+    }catch(e){setError(friendlyError(e))}finally{setBusy(false)}
   }
-
-  const addApproved = async () => {
-    const e = email.trim().toLowerCase()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
-      setMessage('Sila masukkan alamat emel yang sah.'); return
-    }
-    if (e === SUPER_ADMIN_EMAIL) { setMessage('Emel Super Admin tidak boleh diubah melalui whitelist.'); return }
-    setBusy(true); setMessage(''); setError('')
-    try {
-      const existingApproval = approved.find(x => x.id === e)
-      const oldRole = existingApproval?.role || null
-      await setDoc(doc(db, 'approvedUsers', e), {
-        role, addedBy: me.uid, addedAt: serverTimestamp(), updatedAt: serverTimestamp(),
-      })
-      const matching = users.find(u => u.email?.toLowerCase() === e)
-      if (matching) {
-        await updateDoc(doc(db, 'users', matching.id), { role, status: 'active', roleUpdatedAt: serverTimestamp() })
-      }
-      await writeAudit(oldRole ? 'ROLE_UPDATED' : 'USER_APPROVED', e, oldRole, role)
-      setEmail('')
-      setMessage(matching ? `Whitelist dan profil ${e} dikemas kini sebagai ${ROLE_LABEL[role]}.` : `Emel ${e} diluluskan. Pengguna akan mendapat role ${ROLE_LABEL[role]} semasa login pertama.`)
-      setNotice('Perubahan whitelist / role berjaya direkodkan.')
-    } catch (e) { setError(friendlyError(e)) }
-    finally { setBusy(false) }
+  const suspend=async(item)=>{
+    const match=users.find(x=>x.email?.toLowerCase()===item.id),active=item.status==='inactive'||match?.status==='suspended'
+    setBusy(true);setError('')
+    try{
+      await updateDoc(doc(db,'approvedUsers',item.id),{status:active?'active':'inactive',updatedAt:serverTimestamp()})
+      if(match)await updateDoc(doc(db,'users',match.id),{status:active?'active':'suspended',statusUpdatedAt:serverTimestamp()})
+      await audit(active?'ACCESS_REACTIVATED':'ACCESS_SUSPENDED',item.id,item.role,item.role)
+    }catch(e){setError(friendlyError(e))}finally{setBusy(false)}
   }
-
-  const revoke = async (item) => {
-    if (!window.confirm(`Tarik balik akses ${item.id}? Akaun sedia ada akan digantung.`)) return
-    setBusy(true); setError('')
-    try {
-      await deleteDoc(doc(db, 'approvedUsers', item.id))
-      const matching = users.find(u => u.email?.toLowerCase() === item.id)
-      if (matching) {
-        await updateDoc(doc(db, 'users', matching.id), { status: 'suspended', suspendedAt: serverTimestamp() })
-      }
-      await writeAudit('ACCESS_REVOKED', item.id, item.role, null, 'Whitelist removed; existing profile suspended')
-      setMessage(`Akses ${item.id} telah ditarik balik.`)
-    } catch (e) { setError(friendlyError(e)) }
-    finally { setBusy(false) }
+  const saveHostel=async()=>{
+    const name=hostelName.trim();if(!name)return setMessage('Masukkan nama hostel.')
+    setBusy(true);setError('')
+    try{
+      if(editing){await updateDoc(doc(db,'hostels',editing.id),{name,updatedAt:serverTimestamp(),updatedBy:me.uid});await audit('HOSTEL_UPDATED',editing.id,null,null,name)}
+      else{const ref=await addDoc(collection(db,'hostels'),{name,status:'active',createdAt:serverTimestamp(),createdBy:me.uid});await audit('HOSTEL_CREATED',ref.id,null,null,name)}
+      setHostelName('');setEditing(null);setMessage('Hostel berjaya disimpan.')
+    }catch(e){setError(friendlyError(e))}finally{setBusy(false)}
   }
-
-  const adminUsers = useMemo(() => users.filter(u => u.role === 'admin'), [users])
-
-  return (
-    <div className="space-y-6">
-      <section className="card">
-        <div className="mb-4 flex items-center gap-2"><Users className="text-teal"/><h3 className="section-title">Pengurusan Pengguna & Admin</h3></div>
-        <p className="muted mb-4">Hanya Super Admin boleh meluluskan emel, melantik Admin atau menarik balik akses.</p>
-        <div className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
-          <input className="field" value={email} onChange={e => setEmail(e.target.value)} placeholder="alamat@gmail.com" type="email"/>
-          <select className="field" value={role} onChange={e => setRole(e.target.value)}>
-            <option value="student">Pelajar</option>
-            <option value="admin">Admin</option>
-          </select>
-          <button className="btn-primary" onClick={addApproved} disabled={busy}><UserPlus size={16}/> Lulus / Tetapkan Role</button>
-        </div>
-        {message && <p className="mt-3 text-sm text-emerald-700">{message}</p>}
-        {error && <p className="mt-3 flex items-center gap-2 text-sm text-red-700"><AlertCircle size={16}/>{error}</p>}
-      </section>
-
-      <section className="card">
-        <h3 className="section-title">Senarai Emel Dibenarkan ({approved.length})</h3>
-        <div className="mt-3 divide-y">
-          {approved.length === 0 && <p className="py-4 text-sm text-slate-500">Belum ada emel diluluskan.</p>}
-          {approved.map(item => (
-            <div key={item.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div><p className="font-medium">{item.id}</p><p className="text-xs text-slate-500">{ROLE_LABEL[item.role] || item.role}</p></div>
-              <button className="btn-danger self-start" onClick={() => revoke(item)} disabled={busy}><Trash2 size={15}/> Tarik balik akses</button>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="card">
-        <h3 className="section-title">Admin Dilantik ({adminUsers.length})</h3>
-        <div className="mt-3 divide-y">
-          {adminUsers.length === 0 && <p className="py-4 text-sm text-slate-500">Belum ada Admin dilantik.</p>}
-          {adminUsers.map(a => (
-            <div key={a.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div><p className="font-medium">{a.displayName || a.email}</p><p className="text-xs text-slate-500">{a.email} · {a.status}</p></div>
-              <button className="btn-secondary self-start" onClick={() => {
-                setEmail(a.email); setRole('student')
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }}>Pilih untuk demote</button>
-            </div>
-          ))}
-        </div>
-        <p className="mt-3 text-xs text-slate-500">Untuk menurunkan Admin kepada Pelajar, masukkan emel Admin di ruangan atas dan pilih Pelajar. Perubahan role dan audit log akan dikemas kini.</p>
-      </section>
-
-      <AuditLog />
-    </div>
-  )
+  const toggleHostel=async h=>{const status=h.status==='active'?'inactive':'active';setBusy(true);setError('');try{await updateDoc(doc(db,'hostels',h.id),{status,updatedAt:serverTimestamp(),updatedBy:me.uid});await audit('HOSTEL_STATUS_CHANGED',h.id,null,null,status)}catch(e){setError(friendlyError(e))}finally{setBusy(false)}}
+  const admins=approved.filter(x=>x.role==='admin')
+  return <div className="space-y-6">
+    <section className="card"><h3 className="section-title">Admin Management & Role Assignment</h3><p className="muted my-3">Daftarkan emel Google dan tetapkan satu atau beberapa hostel untuk Admin/Warden.</p>
+      <div className="grid gap-3 md:grid-cols-2"><label className="text-sm">Emel Google<input className="field mt-1" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@gmail.com"/></label><label className="text-sm">Peranan<select className="field mt-1" value={role} onChange={e=>setRole(e.target.value)}><option value="admin">Admin / Warden</option><option value="student">Pelajar</option></select></label></div>
+      {role==='admin'&&<div className="mt-4"><p className="text-sm font-semibold mb-2">Penempatan Hostel</p><div className="grid gap-2 sm:grid-cols-2">{hostels.filter(h=>h.status==='active').map(h=><label key={h.id} className="border rounded-xl p-3 flex gap-2 text-sm"><input type="checkbox" checked={hostelIds.includes(h.id)} onChange={()=>setHostelIds(v=>v.includes(h.id)?v.filter(x=>x!==h.id):[...v,h.id])}/>{h.name}</label>)}</div>{!hostels.some(h=>h.status==='active')&&<p className="text-sm text-amber-700">Daftarkan hostel dahulu.</p>}</div>}
+      <button className="btn-primary mt-4" onClick={saveAccess} disabled={busy}>Simpan Akses & Peranan</button>{message&&<p className="text-sm text-emerald-700 mt-3">{message}</p>}{error&&<p className="text-sm text-red-700 mt-3">{error}</p>}
+    </section>
+    <section className="card"><h3 className="section-title">Pengurusan Hostel ({hostels.length})</h3><div className="flex flex-col sm:flex-row gap-2 mt-3"><input className="field" value={hostelName} onChange={e=>setHostelName(e.target.value)} placeholder="Nama hostel"/><button className="btn-primary" onClick={saveHostel} disabled={busy}>{editing?'Kemaskini':'Tambah Hostel'}</button>{editing&&<button className="btn-secondary" onClick={()=>{setEditing(null);setHostelName('')}}>Batal</button>}</div>{hostels.map(h=><div key={h.id} className="py-3 border-b flex flex-col sm:flex-row gap-2 sm:justify-between"><div><b>{h.name}</b><p className="text-xs text-slate-500">{h.status} · {h.id}</p></div><div className="flex gap-2"><button className="btn-secondary" onClick={()=>{setEditing(h);setHostelName(h.name)}}>Edit</button><button className="btn-danger" onClick={()=>toggleHostel(h)} disabled={busy}>{h.status==='active'?'Nyahaktif':'Aktifkan'}</button></div></div>)}</section>
+    <section className="card"><h3 className="section-title">Senarai Admin / Warden ({admins.length})</h3>{admins.map(item=>{const match=users.find(x=>x.email?.toLowerCase()===item.id),active=item.status!=='inactive'&&match?.status!=='suspended',names=(item.hostelIds||[]).map(id=>hostels.find(h=>h.id===id)?.name||id);return <div key={item.id} className="py-3 border-b flex flex-col gap-2 lg:flex-row lg:justify-between"><div><b className="break-all">{match?.displayName||item.id}</b><p className="text-xs text-slate-500">{item.id} · {active?'Aktif':'Digantung'}</p><p className="text-xs">Hostel: {names.join(', ')||'Belum ditetapkan'}</p></div><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={()=>{setEmail(item.id);setRole('admin');setHostelIds(item.hostelIds||[]);window.scrollTo({top:0,behavior:'smooth'})}}>Ubah Penempatan</button><button className="btn-danger" onClick={()=>suspend(item)} disabled={busy}>{active?'Gantung Akses':'Aktifkan Akses'}</button><button className="btn-secondary" onClick={()=>{setEmail(item.id);setRole('student');setHostelIds([]);window.scrollTo({top:0,behavior:'smooth'})}}>Tukar ke Pelajar</button></div></div>})}</section>
+    <AuditLog/>
+  </div>
 }
-
 function AuditLog() {
   const [logs, setLogs] = useState([])
   const [error, setError] = useState('')
