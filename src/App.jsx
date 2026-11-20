@@ -18,7 +18,7 @@ const emptyContact = () => ({ fullName: '', phone: '', relationship: '', address
 const initialContacts = [emptyContact(), emptyContact()]
 
 const MODULES = [
-  { id: 'dashboard', title: 'Home Dashboard', desc: 'Ringkasan aktiviti dan makluman hostel', icon: LayoutDashboard, status: 'ready' },
+  { id: 'home-dashboard', title: 'Home Dashboard', desc: 'Ringkasan aktiviti dan makluman hostel', icon: LayoutDashboard, status: 'ready' },
   { id: 'profile', title: 'Student Registration & Profile', desc: 'Profil pelajar dan maklumat peribadi', icon: UserRound, status: 'ready' },
   { id: 'emergency', title: 'Emergency Contact', desc: 'Maklumat waris dan penjaga', icon: Phone, status: 'ready' },
   { id: 'attendance', title: 'Class Attendance', desc: 'Rekod kehadiran kelas', icon: CalendarCheck },
@@ -52,7 +52,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [activeModule, setActiveModule] = useState('dashboard')
+  const [activeModule, setActiveModule] = useState('modules')
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -170,7 +170,7 @@ export default function App() {
           <p className="mt-2 text-sm text-slate-500">{profile.email}</p>
         </section>
 
-        {activeModule === 'dashboard' ? (
+        {activeModule === 'modules' ? (
           <>
             {isAdmin && <AdminOverview />}
             <section>
@@ -190,7 +190,7 @@ export default function App() {
             </section>
           </>
         ) : (
-          <ModuleView id={activeModule} user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} onBack={() => setActiveModule('dashboard')}/>
+          <ModuleView id={activeModule} user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} onBack={() => setActiveModule('modules')}/>
         )}
       </main>
       <footer className="py-8 text-center text-xs text-slate-400">D'SURIA HOSTEL HUB · Fasa 3A</footer>
@@ -207,12 +207,45 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
       <section className="card">
         <div className="flex items-center gap-3"><span className="rounded-xl bg-teal/10 p-3 text-teal"><module.icon size={24}/></span><div><h3 className="section-title">{module.title}</h3><p className="muted">{module.desc}</p></div></div>
       </section>
-      {id === 'profile' || id === 'emergency' ? (
+      {id === 'home-dashboard' ? (
+        <HomeDashboard profile={profile} isAdmin={isAdmin} isSuper={isSuper} onBack={onBack}/>
+      ) : id === 'profile' || id === 'emergency' ? (
         profile.role === 'student' ? <StudentWorkspace user={user} profile={profile} setNotice={setNotice} initialTab={id}/> :
           <section className="card"><p className="font-medium text-navy">Paparan profil pelajar untuk Admin akan dibangunkan dalam peringkat seterusnya.</p><p className="muted mt-2">Pada masa ini, modul profil dan Emergency Contact boleh diisi oleh pelajar melalui akaun masing-masing.</p></section>
       ) : id === 'admin' && isSuper ? <AdminManagement me={user} setNotice={setNotice}/> : (
         <section className="card"><div className="flex items-start gap-3"><AlertCircle className="mt-0.5 text-amber-600"/><div><h4 className="font-semibold text-navy">Modul dalam pembangunan</h4><p className="muted mt-1">Paparan navigasi Fasa 3A telah disediakan. Fungsi data, borang, laporan dan kawalan akses modul ini akan dibina dalam fasa seterusnya.</p></div></div></section>
       )}
+    </div>
+  )
+}
+
+function HomeDashboard({ profile, isAdmin, isSuper, onBack }) {
+  return (
+    <div className="space-y-5">
+      <section className="card">
+        <p className="muted">Ringkasan utama</p>
+        <h3 className="mt-1 text-xl font-bold text-navy">Selamat datang ke Home Dashboard</h3>
+        <p className="muted mt-2">Paparan ringkas D'SURIA HOSTEL HUB untuk membantu penghuni dan pihak pengurusan melihat maklumat hostel.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">Pengguna log masuk</p>
+            <p className="mt-1 font-semibold text-navy">{profile.displayName || profile.email}</p>
+            <p className="text-xs text-slate-500">{ROLE_LABEL[profile.role]}</p>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">Status modul</p>
+            <p className="mt-1 font-semibold text-navy">Fasa 3A</p>
+            <p className="text-xs text-slate-500">Navigasi dan akses modul asas</p>
+          </div>
+        </div>
+      </section>
+      {isAdmin && <AdminOverview/>}
+      <section className="card">
+        <h4 className="font-semibold text-navy">Makluman</h4>
+        <p className="muted mt-2">Modul pengurusan lain akan diaktifkan secara berperingkat selepas fungsi, rekod data dan kawalan akses diuji.</p>
+        {isSuper && <p className="mt-2 text-xs text-teal">Akaun Super Admin mempunyai akses kepada Pengurusan Admin.</p>}
+        <button className="btn-primary mt-4" onClick={onBack}><LayoutDashboard size={16}/> Kembali ke senarai modul</button>
+      </section>
     </div>
   )
 }
