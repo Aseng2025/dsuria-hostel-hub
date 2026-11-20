@@ -7,12 +7,34 @@ import {
 import {
   Home, LogIn, LogOut, ShieldCheck, UserPlus, Trash2, Users,
   UserRound, Phone, Save, AlertCircle, CheckCircle2, RefreshCw,
+  CalendarCheck, MapPin, Clock, Sparkles, MessageSquare, Wallet,
+  Receipt, Siren, BookOpen, Award, Settings, ArrowLeft, LayoutDashboard,
+  ClipboardList, Trash, UsersRound,
 } from 'lucide-react'
 import { auth, db, provider, SUPER_ADMIN_EMAIL } from './firebase'
 
 const ROLE_LABEL = { superadmin: 'Super Admin', admin: 'Admin', student: 'Pelajar' }
 const emptyContact = () => ({ fullName: '', phone: '', relationship: '', address: '' })
 const initialContacts = [emptyContact(), emptyContact()]
+
+const MODULES = [
+  { id: 'dashboard', title: 'Home Dashboard', desc: 'Ringkasan aktiviti dan makluman hostel', icon: LayoutDashboard, status: 'ready' },
+  { id: 'profile', title: 'Student Registration & Profile', desc: 'Profil pelajar dan maklumat peribadi', icon: UserRound, status: 'ready' },
+  { id: 'emergency', title: 'Emergency Contact', desc: 'Maklumat waris dan penjaga', icon: Phone, status: 'ready' },
+  { id: 'attendance', title: 'Class Attendance', desc: 'Rekod kehadiran kelas', icon: CalendarCheck },
+  { id: 'outing', title: 'Going Home / Outing Log', desc: 'Rekod keluar, destinasi dan pulang', icon: MapPin },
+  { id: 'geofence', title: 'Geofence Monitoring', desc: 'Pengesahan kembali ke kawasan hostel', icon: MapPin },
+  { id: 'daily-status', title: 'Daily Student Status', desc: 'Status keberadaan dan pemantauan curfew', icon: Clock },
+  { id: 'cleaning', title: 'Cleaning Schedule', desc: 'Jadual tugasan kebersihan mingguan', icon: Sparkles },
+  { id: 'trash-wars', title: 'Trash Wars', desc: 'Giliran buang sampah dan ganjaran XP', icon: Trash },
+  { id: 'lobby', title: 'Hostel Lobby', desc: 'Pengumuman dan ruang komuniti', icon: MessageSquare },
+  { id: 'bills', title: 'Bills Management', desc: 'Pengurusan bil elektrik dan air', icon: Wallet },
+  { id: 'collection', title: 'Monthly Collection', desc: 'Kutipan bulanan penghuni', icon: Receipt },
+  { id: 'sos', title: 'Location Sharing & SOS', desc: 'Perkongsian lokasi secara sukarela dan bantuan kecemasan', icon: Siren },
+  { id: 'rules', title: 'Hostel Rules', desc: 'Peraturan rasmi dan pengesahan bacaan', icon: BookOpen },
+  { id: 'merit', title: 'Merit & Demerit System', desc: 'Rekod merit, demerit dan rayuan', icon: Award },
+  { id: 'admin', title: 'Admin Management', desc: 'Pengurusan peranan dan akses pengguna', icon: Settings, superOnly: true, status: 'ready' },
+]
 
 function friendlyError(error) {
   const code = error?.code || ''
@@ -30,6 +52,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [activeModule, setActiveModule] = useState('dashboard')
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -147,16 +170,54 @@ export default function App() {
           <p className="mt-2 text-sm text-slate-500">{profile.email}</p>
         </section>
 
-        {profile.role === 'student' && <StudentWorkspace user={user} profile={profile} setNotice={setNotice}/>}
-        {isAdmin && <AdminOverview />}
-        {isSuper && <AdminManagement me={user} setNotice={setNotice}/>}
+        {activeModule === 'dashboard' ? (
+          <>
+            {isAdmin && <AdminOverview />}
+            <section>
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                <div><h3 className="section-title">Modul Hostel</h3><p className="muted mt-1">Pilih modul untuk membuka fungsi berkaitan.</p></div>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">16 modul</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {MODULES.filter(m => !m.superOnly || isSuper).map(m => {
+                  const Icon = m.icon
+                  return <button key={m.id} onClick={() => setActiveModule(m.id)} className="card group text-left transition hover:-translate-y-0.5 hover:border-teal hover:shadow-md">
+                    <div className="flex items-start justify-between gap-3"><span className="rounded-xl bg-teal/10 p-3 text-teal"><Icon size={21}/></span>{m.status === 'ready' ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">Tersedia</span> : <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">Fasa seterusnya</span>}</div>
+                    <h4 className="mt-4 font-bold text-navy">{m.title}</h4><p className="mt-1 text-sm text-slate-500">{m.desc}</p>
+                  </button>
+                })}
+              </div>
+            </section>
+          </>
+        ) : (
+          <ModuleView id={activeModule} user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} onBack={() => setActiveModule('dashboard')}/>
+        )}
       </main>
-      <footer className="py-8 text-center text-xs text-slate-400">D'SURIA HOSTEL HUB · Fasa 2</footer>
+      <footer className="py-8 text-center text-xs text-slate-400">D'SURIA HOSTEL HUB · Fasa 3A</footer>
     </div>
   )
 }
 
-function StudentWorkspace({ user, profile, setNotice }) {
+function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) {
+  const module = MODULES.find(m => m.id === id)
+  if (!module || (module.superOnly && !isSuper)) return <section className="card"><p>Akses tidak dibenarkan.</p><button className="btn-secondary mt-4" onClick={onBack}><ArrowLeft size={16}/> Kembali</button></section>
+  return (
+    <div className="space-y-5">
+      <button className="btn-secondary" onClick={onBack}><ArrowLeft size={16}/> Kembali ke Dashboard</button>
+      <section className="card">
+        <div className="flex items-center gap-3"><span className="rounded-xl bg-teal/10 p-3 text-teal"><module.icon size={24}/></span><div><h3 className="section-title">{module.title}</h3><p className="muted">{module.desc}</p></div></div>
+      </section>
+      {id === 'profile' || id === 'emergency' ? (
+        profile.role === 'student' ? <StudentWorkspace user={user} profile={profile} setNotice={setNotice} initialTab={id}/> :
+          <section className="card"><p className="font-medium text-navy">Paparan profil pelajar untuk Admin akan dibangunkan dalam peringkat seterusnya.</p><p className="muted mt-2">Pada masa ini, modul profil dan Emergency Contact boleh diisi oleh pelajar melalui akaun masing-masing.</p></section>
+      ) : id === 'admin' && isSuper ? <AdminManagement me={user} setNotice={setNotice}/> : (
+        <section className="card"><div className="flex items-start gap-3"><AlertCircle className="mt-0.5 text-amber-600"/><div><h4 className="font-semibold text-navy">Modul dalam pembangunan</h4><p className="muted mt-1">Paparan navigasi Fasa 3A telah disediakan. Fungsi data, borang, laporan dan kawalan akses modul ini akan dibina dalam fasa seterusnya.</p></div></div></section>
+      )}
+    </div>
+  )
+}
+
+function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
   const [form, setForm] = useState({ fullName: profile.displayName || '', phone: '', programme: '', room: '' })
   const [contacts, setContacts] = useState(initialContacts)
   const [loading, setLoading] = useState(true)
@@ -232,7 +293,7 @@ function StudentWorkspace({ user, profile, setNotice }) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      <section className="card">
+      {(initialTab === 'all' || initialTab === 'profile') && <section className="card">
         <div className="mb-4 flex items-center gap-2"><UserRound className="text-teal"/><h3 className="section-title">Profil Pelajar</h3></div>
         <p className="muted mb-4">Maklumat asas pelajar. Emel Google diambil daripada akaun log masuk.</p>
         {error && <p className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
@@ -254,9 +315,9 @@ function StudentWorkspace({ user, profile, setNotice }) {
           </label>
           <button className="btn-primary w-full" disabled={savingProfile}><Save size={16}/>{savingProfile ? 'Menyimpan…' : 'Simpan Profil'}</button>
         </form>
-      </section>
+      </section>}
 
-      <section className="card">
+      {(initialTab === 'all' || initialTab === 'emergency') && <section className="card">
         <div className="mb-2 flex items-center gap-2"><Phone className="text-teal"/><h3 className="section-title">Emergency Contact</h3></div>
         <p className="muted mb-4">Dua orang waris / penjaga wajib didaftarkan. Maklumat ini hanya boleh dilihat oleh pelajar berkenaan dan Admin yang diberi kuasa.</p>
         <form onSubmit={saveContacts} className="space-y-5">
@@ -281,7 +342,7 @@ function StudentWorkspace({ user, profile, setNotice }) {
           ))}
           <button className="btn-primary w-full" disabled={savingContacts}><Save size={16}/>{savingContacts ? 'Menyimpan…' : 'Simpan 2 Emergency Contacts'}</button>
         </form>
-      </section>
+      </section>}
     </div>
   )
 }
