@@ -12,7 +12,6 @@ import {
   ClipboardList, Trash, UsersRound,
 } from 'lucide-react'
 import { auth, db, provider, SUPER_ADMIN_EMAIL } from './firebase'
-import OperationalModule from './OperationalModule'
 
 const ROLE_LABEL = { superadmin: 'Super Admin', admin: 'Admin', student: 'Pelajar' }
 const emptyContact = () => ({ fullName: '', phone: '', relationship: '', address: '' })
@@ -22,18 +21,18 @@ const MODULES = [
   { id: 'home-dashboard', title: 'Home Dashboard', desc: 'Ringkasan aktiviti dan makluman hostel', icon: LayoutDashboard, status: 'ready' },
   { id: 'profile', title: 'Student Registration & Profile', desc: 'Profil pelajar dan maklumat peribadi', icon: UserRound, status: 'ready' },
   { id: 'emergency', title: 'Emergency Contact', desc: 'Maklumat waris dan penjaga', icon: Phone, status: 'ready' },
-  { id: 'attendance', title: 'Class Attendance', desc: 'Rekod kehadiran kelas', icon: CalendarCheck, status: 'ready' },
-  { id: 'outing', title: 'Going Home / Outing Log', desc: 'Rekod keluar, destinasi dan pulang', icon: MapPin, status: 'ready' },
-  { id: 'geofence', title: 'Geofence Monitoring', desc: 'Pengesahan kembali ke kawasan hostel', icon: MapPin, status: 'ready' },
-  { id: 'daily-status', title: 'Daily Student Status', desc: 'Status keberadaan dan pemantauan curfew', icon: Clock, status: 'ready' },
-  { id: 'cleaning', title: 'Cleaning Schedule', desc: 'Jadual tugasan kebersihan mingguan', icon: Sparkles, status: 'ready' },
-  { id: 'trash-wars', title: 'Trash Wars', desc: 'Giliran buang sampah dan ganjaran XP', icon: Trash, status: 'ready' },
-  { id: 'lobby', title: 'Hostel Lobby', desc: 'Pengumuman dan ruang komuniti', icon: MessageSquare, status: 'ready' },
-  { id: 'bills', title: 'Bills Management', desc: 'Pengurusan bil elektrik dan air', icon: Wallet, status: 'ready' },
-  { id: 'collection', title: 'Monthly Collection', desc: 'Kutipan bulanan penghuni', icon: Receipt, status: 'ready' },
-  { id: 'sos', title: 'Location Sharing & SOS', desc: 'Perkongsian lokasi secara sukarela dan bantuan kecemasan', icon: Siren, status: 'ready' },
-  { id: 'rules', title: 'Hostel Rules', desc: 'Peraturan rasmi dan pengesahan bacaan', icon: BookOpen, status: 'ready' },
-  { id: 'merit', title: 'Merit & Demerit System', desc: 'Rekod merit, demerit dan rayuan', icon: Award, status: 'ready' },
+  { id: 'attendance', title: 'Class Attendance', desc: 'Rekod kehadiran kelas', icon: CalendarCheck },
+  { id: 'outing', title: 'Going Home / Outing Log', desc: 'Rekod keluar, destinasi dan pulang', icon: MapPin },
+  { id: 'geofence', title: 'Geofence Monitoring', desc: 'Pengesahan kembali ke kawasan hostel', icon: MapPin },
+  { id: 'daily-status', title: 'Daily Student Status', desc: 'Status keberadaan dan pemantauan curfew', icon: Clock },
+  { id: 'cleaning', title: 'Cleaning Schedule', desc: 'Jadual tugasan kebersihan mingguan', icon: Sparkles },
+  { id: 'trash-wars', title: 'Trash Wars', desc: 'Giliran buang sampah dan ganjaran XP', icon: Trash },
+  { id: 'lobby', title: 'Hostel Lobby', desc: 'Pengumuman dan ruang komuniti', icon: MessageSquare },
+  { id: 'bills', title: 'Bills Management', desc: 'Pengurusan bil elektrik dan air', icon: Wallet },
+  { id: 'collection', title: 'Monthly Collection', desc: 'Kutipan bulanan penghuni', icon: Receipt },
+  { id: 'sos', title: 'Location Sharing & SOS', desc: 'Perkongsian lokasi secara sukarela dan bantuan kecemasan', icon: Siren },
+  { id: 'rules', title: 'Hostel Rules', desc: 'Peraturan rasmi dan pengesahan bacaan', icon: BookOpen },
+  { id: 'merit', title: 'Merit & Demerit System', desc: 'Rekod merit, demerit dan rayuan', icon: Award },
   { id: 'admin', title: 'Admin Management', desc: 'Pengurusan peranan dan akses pengguna', icon: Settings, superOnly: true, status: 'ready' },
 ]
 
@@ -194,7 +193,7 @@ export default function App() {
           <ModuleView id={activeModule} user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} onBack={() => setActiveModule('modules')}/>
         )}
       </main>
-      <footer className="py-8 text-center text-xs text-slate-400">D'SURIA HOSTEL HUB · Operational MVP</footer>
+      <footer className="py-8 text-center text-xs text-slate-400">D'SURIA HOSTEL HUB · Fasa 3A</footer>
     </div>
   )
 }
@@ -212,9 +211,9 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
         <HomeDashboard profile={profile} isAdmin={isAdmin} isSuper={isSuper} onBack={onBack}/>
       ) : id === 'profile' || id === 'emergency' ? (
         profile.role === 'student' ? <StudentWorkspace user={user} profile={profile} setNotice={setNotice} initialTab={id}/> :
-          <AdminStudentDirectory section={id} />
+          <section className="card"><p className="font-medium text-navy">Paparan profil pelajar untuk Admin akan dibangunkan dalam peringkat seterusnya.</p><p className="muted mt-2">Pada masa ini, modul profil dan Emergency Contact boleh diisi oleh pelajar melalui akaun masing-masing.</p></section>
       ) : id === 'admin' && isSuper ? <AdminManagement me={user} setNotice={setNotice}/> : (
-        <OperationalModule id={id} user={user} profile={profile} isAdmin={isAdmin} setNotice={setNotice}/>
+        <section className="card"><div className="flex items-start gap-3"><AlertCircle className="mt-0.5 text-amber-600"/><div><h4 className="font-semibold text-navy">Modul dalam pembangunan</h4><p className="muted mt-1">Paparan navigasi Fasa 3A telah disediakan. Fungsi data, borang, laporan dan kawalan akses modul ini akan dibina dalam fasa seterusnya.</p></div></div></section>
       )}
     </div>
   )
@@ -247,120 +246,6 @@ function HomeDashboard({ profile, isAdmin, isSuper, onBack }) {
         {isSuper && <p className="mt-2 text-xs text-teal">Akaun Super Admin mempunyai akses kepada Pengurusan Admin.</p>}
         <button className="btn-primary mt-4" onClick={onBack}><LayoutDashboard size={16}/> Kembali ke senarai modul</button>
       </section>
-    </div>
-  )
-}
-
-function AdminStudentDirectory({ section }) {
-  const [students, setStudents] = useState([])
-  const [selected, setSelected] = useState(null)
-  const [profileData, setProfileData] = useState(null)
-  const [contactData, setContactData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [search, setSearch] = useState('')
-
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'users'), snap => {
-      const rows = snap.docs
-        .map(d => ({ uid: d.id, ...d.data() }))
-        .filter(u => u.role === 'student' && u.status === 'active')
-        .sort((a, b) => (a.displayName || a.email || '').localeCompare(b.displayName || b.email || ''))
-      setStudents(rows)
-      setLoading(false)
-    }, e => { setError(friendlyError(e)); setLoading(false) })
-    return unsub
-  }, [])
-
-  const openStudent = async (student) => {
-    setSelected(student)
-    setDetailLoading(true)
-    setError('')
-    setProfileData(null)
-    setContactData(null)
-    try {
-      const [p, c] = await Promise.all([
-        getDoc(doc(db, 'studentProfiles', student.uid)),
-        getDoc(doc(db, 'emergencyContacts', student.uid)),
-      ])
-      setProfileData(p.exists() ? p.data() : null)
-      setContactData(c.exists() ? c.data() : null)
-    } catch (e) { setError(friendlyError(e)) }
-    finally { setDetailLoading(false) }
-  }
-
-  const filtered = students.filter(s =>
-    `${s.displayName || ''} ${s.email || ''}`.toLowerCase().includes(search.toLowerCase())
-  )
-
-  const formatPhone = (value) => {
-    const digits = (value || '').replace(/\D/g, '')
-    if (!digits) return ''
-    if (digits.startsWith('0')) return `6${digits}`
-    if (digits.startsWith('60')) return digits
-    return digits
-  }
-
-  return (
-    <div className="space-y-5">
-      <section className="card">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="section-title">{section === 'profile' ? 'Senarai Profil Pelajar' : 'Emergency Contact Pelajar'}</h3>
-            <p className="muted mt-1">Maklumat ini hanya dipaparkan kepada Admin dan Super Admin yang telah log masuk.</p>
-          </div>
-          <span className="rounded-full bg-teal/10 px-3 py-1 text-sm font-semibold text-teal">{students.length} pelajar aktif</span>
-        </div>
-        <input className="field mt-4" value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nama atau emel pelajar…"/>
-        {error && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        {loading ? <p className="mt-4 text-sm text-slate-500">Memuatkan senarai pelajar…</p> :
-          filtered.length === 0 ? <p className="mt-4 text-sm text-slate-500">Tiada pelajar aktif ditemui. Pastikan emel pelajar telah diluluskan dan pelajar telah log masuk sekurang-kurangnya sekali.</p> :
-          <div className="mt-4 divide-y">
-            {filtered.map(s => (
-              <button key={s.uid} onClick={() => openStudent(s)}
-                className={`flex w-full flex-col gap-1 rounded-lg px-3 py-3 text-left hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between ${selected?.uid === s.uid ? 'bg-teal/5 ring-1 ring-teal/30' : ''}`}>
-                <span><strong className="block text-navy">{profileData?.uid === s.uid && profileData?.fullName ? profileData.fullName : s.displayName || 'Nama belum dilengkapkan'}</strong><span className="text-xs text-slate-500">{s.email}</span></span>
-                <span className="text-sm font-medium text-teal">Lihat maklumat →</span>
-              </button>
-            ))}
-          </div>}
-      </section>
-
-      {selected && <section className="card">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div><h3 className="section-title">{selected.displayName || selected.email}</h3><p className="muted">{selected.email}</p></div>
-          <button className="btn-secondary" onClick={() => { setSelected(null); setProfileData(null); setContactData(null) }}>Tutup butiran</button>
-        </div>
-        {detailLoading ? <p className="mt-4 text-sm text-slate-500">Memuatkan maklumat…</p> : (
-          <div className="mt-4 space-y-5">
-            {(section === 'profile' || section === 'all') && <div>
-              <h4 className="mb-3 font-bold text-navy">Profil Pelajar</h4>
-              {!profileData ? <p className="text-sm text-amber-700">Pelajar belum melengkapkan profil.</p> : <div className="grid gap-3 sm:grid-cols-2">
-                {[['Nama penuh', profileData.fullName], ['Nombor telefon', profileData.phone], ['Program / Kursus', profileData.programme], ['Bilik', profileData.room]].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 font-medium text-navy">{value || 'Belum diisi'}</p></div>)}
-              </div>}
-            </div>}
-            {(section === 'emergency' || section === 'all') && <div>
-              <h4 className="mb-3 font-bold text-navy">Emergency Contact / Waris</h4>
-              {!contactData ? <p className="text-sm text-amber-700">Pelajar belum mendaftarkan dua orang waris.</p> : <div className="grid gap-3 md:grid-cols-2">
-                {(contactData.contacts || []).map((c, i) => {
-                  const phone = formatPhone(c.phone)
-                  return <div key={i} className="rounded-xl border border-slate-200 p-4">
-                    <p className="font-bold text-navy">Waris {i + 1}: {c.fullName}</p>
-                    <p className="mt-1 text-sm text-slate-600">{c.relationship}</p>
-                    <p className="mt-2 text-sm">{c.phone}</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-slate-500">{c.address}</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {phone && <a className="btn-primary" href={`tel:+${phone}`}><Phone size={15}/> Call</a>}
-                      {phone && <a className="btn-secondary" href={`https://wa.me/${phone}`} target="_blank" rel="noreferrer">WhatsApp</a>}
-                    </div>
-                  </div>
-                })}
-              </div>}
-            </div>}
-          </div>
-        )}
-      </section>}
     </div>
   )
 }

@@ -116,31 +116,6 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Operational hostel modules. Student records are scoped to their own UID;
-    // Admin/Super Admin can review and manage all module records.
-    match /{collectionName}/{recordId} {
-      function isHostelModule() {
-        return collectionName in [
-          'hostel_attendance', 'hostel_outing', 'hostel_geofence',
-          'hostel_daily-status', 'hostel_cleaning', 'hostel_trash-wars',
-          'hostel_lobby', 'hostel_bills', 'hostel_collection',
-          'hostel_sos', 'hostel_rules', 'hostel_merit'
-        ];
-      }
-      allow read: if isHostelModule() && isActiveUser()
-        && (isAdmin() || resource.data.ownerUid == request.auth.uid);
-      allow create: if isHostelModule() && isActiveUser()
-        && request.resource.data.ownerUid == request.auth.uid
-        && (collectionName != 'hostel_merit' || isAdmin());
-      allow update: if isHostelModule() && isActiveUser()
-        && (isAdmin() || (
-          resource.data.ownerUid == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status', 'returnedAt', 'returnVerification', 'updatedAt'])
-        ));
-      allow delete: if isHostelModule() && isSuper();
-    }
-
     match /{document=**} {
       allow read, write: if false;
     }
