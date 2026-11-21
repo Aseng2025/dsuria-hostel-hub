@@ -1456,11 +1456,15 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
     const ackId = rule.id + '_' + user.uid + '_v' + rule.version;
     setBusy(true); setError(''); setMessage('');
     try {
+      const studentProfileSnap = await getDoc(doc(db, 'studentProfiles', user.uid));
+      if (!studentProfileSnap.exists()) throw new Error('Profil pelajar belum didaftarkan.');
+      const studentProfile = studentProfileSnap.data();
+      if (!studentProfile.hostelId) throw new Error('Sila lengkapkan penempatan hostel sebelum mengesahkan peraturan.');
       await setDoc(doc(db, 'hostelRuleAcknowledgements', ackId), {
         ruleId: rule.id, ruleTitle: rule.title, version: rule.version || 1,
         studentUid: user.uid, studentEmail: profile.email || user.email || '',
-        studentName: profile.displayName || user.displayName || '',
-        hostelId: profile.hostelId || '', acknowledgedAt: serverTimestamp(),
+        studentName: studentProfile.fullName || profile.displayName || user.displayName || '',
+        hostelId: studentProfile.hostelId, acknowledgedAt: serverTimestamp(),
       });
       setMessage('Pengesahan bacaan berjaya direkodkan.');
       setNotice('Anda telah mengesahkan bacaan peraturan hostel.');
@@ -1470,7 +1474,7 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
   const currentRules = rules.filter(rule => rule.status === 'active');
   const archivedRules = rules.filter(rule => rule.status === 'archived');
   const ackFor = (rule) => myAcks.find(a => a.ruleId === rule.id && Number(a.version) === Number(rule.version));
-  const assignedStudents = isSuper ? students : students.filter(s => hostelIds.includes(s.hostelId));
+  const assignedStudents = (isSuper ? students : students.filter(s => hostelIds.includes(s.hostelId))).filter(s => s.approvalStatus === 'approved');
   const requiredCount = assignedStudents.length;
   const currentAckCount = (rule) => acks.filter(a => a.ruleId === rule.id && Number(a.version) === Number(rule.version)).length;
 
