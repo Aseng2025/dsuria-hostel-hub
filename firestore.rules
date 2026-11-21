@@ -550,6 +550,7 @@ service cloud.firestore {
           'lastLocationAt','updatedAt','updatedBy','createdAt'
         ])
         && request.resource.data.studentUid == request.auth.uid
+        && exists(/databases/$(database)/documents/studentProfiles/$(request.auth.uid))
         && request.resource.data.hostelId == get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.hostelId
         && get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.approvalStatus == 'approved'
         && request.resource.data.date is string
