@@ -40,7 +40,7 @@ const MODULES = [
   { id: 'bills', title: 'Bills Management', desc: 'Pengurusan bil elektrik dan air', icon: Wallet },
   { id: 'collection', title: 'Monthly Collection', desc: 'Kutipan bulanan penghuni', icon: Receipt },
   { id: 'sos', title: 'Location Sharing & SOS', desc: 'Perkongsian lokasi dan bantuan kecemasan', icon: Siren },
-  { id: 'rules', title: 'Hostel Rules', desc: 'Peraturan rasmi dan pengesahan bacaan', icon: BookOpen },
+  { id: 'rules', title: 'Hostel Rules', desc: 'Peraturan rasmi dan pengesahan bacaan', icon: BookOpen, ready: true },
   { id: 'merit', title: 'Merit & Demerit System', desc: 'Rekod merit, demerit dan rayuan', icon: Award },
   { id: 'admin', title: 'Admin Management', desc: 'Pengurusan peranan dan akses pengguna', icon: Settings, superOnly: true, ready: true },
 ]
@@ -405,6 +405,8 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
             </p>
           </section>
         )
+      ) : id === 'rules' ? (
+        <HostelRules user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} />
       ) : id === 'admin' && isSuper ? (
         <AdminManagement me={user} setNotice={setNotice} />
       ) : (
@@ -1298,6 +1300,255 @@ function AdminManagement({ me, setNotice }) {
     </div>
   )
 }
+
+
+const RULE_CATEGORIES = [
+  'General Hostel Rules',
+  'Cleanliness & Safety',
+  'Student Discipline',
+  'Facilities Usage',
+  'Outgoing/Incoming Hours',
+  'Prohibitions & Disciplinary Actions',
+];
+
+function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
+  const [rules, setRules] = useState([]);
+  const [myAcks, setMyAcks] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [acks, setAcks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [title, setTitle] = useState('');
+  const [category, setCategory] = useState(RULE_CATEGORIES[0]);
+  const [content, setContent] = useState('');
+  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
+  const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
+
+  useEffect(() => {
+    return onSnapshot(collection(db, 'hostelRules'), snapshot => {
+      const rows = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+      rows.sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+      setRules(rows);
+      setLoading(false);
+    }, e => { setError(friendlyError(e)); setLoading(false); });
+  }, []);
+
+  useEffect(() => {
+    if (profile.role !== 'student') { setMyAcks([]); return undefined; }
+    return onSnapshot(query(collection(db, 'hostelRuleAcknowledgements'), where('studentUid', '==', user.uid)),
+      snapshot => setMyAcks(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))),
+      e => setError(friendlyError(e)));
+  }, [profile.role, user.uid]);
+
+  useEffect(() => {
+    if (!isAdmin) { setStudents([]); setAcks([]); return undefined; }
+    let active = true;
+    const studentRows = new Map();
+    const ackRows = new Map();
+    const unsubscribers = [];
+    const publish = () => {
+      if (!active) return;
+      setStudents(Array.from(studentRows.values()).flat());
+      setAcks(Array.from(ackRows.values()).flat());
+    };
+    if (isSuper) {
+      unsubscribers.push(onSnapshot(collection(db, 'studentProfiles'), snap => {
+        studentRows.set('all', snap.docs.map(d => ({ uid: d.id, ...d.data() })));
+        publish();
+      }, e => setError(friendlyError(e))));
+      unsubscribers.push(onSnapshot(collection(db, 'hostelRuleAcknowledgements'), snap => {
+        ackRows.set('all', snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        publish();
+      }, e => setError(friendlyError(e))));
+    } else {
+      hostelIds.forEach(hostelId => {
+        unsubscribers.push(onSnapshot(query(collection(db, 'studentProfiles'), where('hostelId', '==', hostelId)), snap => {
+          studentRows.set(hostelId, snap.docs.map(d => ({ uid: d.id, ...d.data() })));
+          publish();
+        }, e => setError(friendlyError(e))));
+        unsubscribers.push(onSnapshot(query(collection(db, 'hostelRuleAcknowledgements'), where('hostelId', '==', hostelId)), snap => {
+          ackRows.set(hostelId, snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          publish();
+        }, e => setError(friendlyError(e))));
+      });
+    }
+    if (isSuper || hostelIds.length) setLoading(false);
+    else setLoading(false);
+    return () => { active = false; unsubscribers.forEach(stop => stop()); };
+  }, [isAdmin, isSuper, hostelIds.join('|')]);
+
+  const resetForm = () => {
+    setEditing(null); setTitle(''); setCategory(RULE_CATEGORIES[0]); setContent('');
+    setEffectiveDate(new Date().toISOString().slice(0, 10));
+  };
+
+  const saveRule = async () => {
+    setError(''); setMessage('');
+    if (!isSuper) return setError('Hanya Super Admin boleh mengurus peraturan.');
+    if (!title.trim() || !content.trim() || !effectiveDate) return setError('Lengkapkan tajuk, kategori, kandungan dan tarikh kuat kuasa.');
+    setBusy(true);
+    try {
+      const now = serverTimestamp();
+      if (editing) {
+        const nextVersion = (Number(editing.version) || 1) + 1;
+        await updateDoc(doc(db, 'hostelRules', editing.id), {
+          title: title.trim(), category, content: content.trim(), effectiveDate,
+          version: nextVersion, updatedAt: now, updatedBy: user.uid, updatedByEmail: profile.email || '',
+        });
+        await addDoc(collection(db, 'hostelRuleAuditLogs'), {
+          ruleId: editing.id, ruleTitle: title.trim(), action: 'RULE_UPDATED', version: nextVersion,
+          performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
+        });
+        setMessage('Peraturan dikemas kini. Semua pelajar perlu membuat pengesahan semula bagi versi baharu.');
+      } else {
+        const ref = doc(collection(db, 'hostelRules'));
+        await setDoc(ref, {
+          title: title.trim(), category, content: content.trim(), effectiveDate, status: 'active',
+          version: 1, createdAt: now, createdBy: user.uid, createdByEmail: profile.email || '',
+          updatedAt: now, updatedBy: user.uid, updatedByEmail: profile.email || '',
+        });
+        await addDoc(collection(db, 'hostelRuleAuditLogs'), {
+          ruleId: ref.id, ruleTitle: title.trim(), action: 'RULE_CREATED', version: 1,
+          performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
+        });
+        setMessage('Peraturan baharu berjaya diterbitkan.');
+      }
+      resetForm(); setNotice('Maklumat Hostel Rules dikemas kini.');
+    } catch (e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
+
+  const archiveRule = async rule => {
+    if (!isSuper || !window.confirm('Arkibkan peraturan ini? Rekod pengesahan lama akan dikekalkan.')) return;
+    setBusy(true); setError('');
+    try {
+      await updateDoc(doc(db, 'hostelRules', rule.id), {
+        status: 'archived', updatedAt: serverTimestamp(), updatedBy: user.uid, updatedByEmail: profile.email || '',
+      });
+      await addDoc(collection(db, 'hostelRuleAuditLogs'), {
+        ruleId: rule.id, ruleTitle: rule.title, action: 'RULE_ARCHIVED', version: rule.version || 1,
+        performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
+      });
+      setMessage('Peraturan diarkibkan. Sejarah pengesahan dikekalkan.');
+    } catch (e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
+
+  const restoreRule = async rule => {
+    if (!isSuper) return;
+    setBusy(true); setError('');
+    try {
+      const version = (Number(rule.version) || 1) + 1;
+      await updateDoc(doc(db, 'hostelRules', rule.id), {
+        status: 'active', version, updatedAt: serverTimestamp(), updatedBy: user.uid, updatedByEmail: profile.email || '',
+      });
+      await addDoc(collection(db, 'hostelRuleAuditLogs'), {
+        ruleId: rule.id, ruleTitle: rule.title, action: 'RULE_REACTIVATED', version,
+        performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
+      });
+      setMessage('Peraturan diaktifkan semula. Pengesahan baharu diperlukan untuk versi terkini.');
+    } catch (e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
+
+  const acknowledge = async rule => {
+    if (profile.role !== 'student' || rule.status !== 'active') return;
+    const ackId = rule.id + '_' + user.uid + '_v' + rule.version;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      await setDoc(doc(db, 'hostelRuleAcknowledgements', ackId), {
+        ruleId: rule.id, ruleTitle: rule.title, version: rule.version || 1,
+        studentUid: user.uid, studentEmail: profile.email || user.email || '',
+        studentName: profile.displayName || user.displayName || '',
+        hostelId: profile.hostelId || '', acknowledgedAt: serverTimestamp(),
+      });
+      setMessage('Pengesahan bacaan berjaya direkodkan.');
+      setNotice('Anda telah mengesahkan bacaan peraturan hostel.');
+    } catch (e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
+
+  const currentRules = rules.filter(rule => rule.status === 'active');
+  const archivedRules = rules.filter(rule => rule.status === 'archived');
+  const ackFor = (rule) => myAcks.find(a => a.ruleId === rule.id && Number(a.version) === Number(rule.version));
+  const assignedStudents = isSuper ? students : students.filter(s => hostelIds.includes(s.hostelId));
+  const requiredCount = assignedStudents.length;
+  const currentAckCount = (rule) => acks.filter(a => a.ruleId === rule.id && Number(a.version) === Number(rule.version)).length;
+
+  return (
+    <div className="space-y-5">
+      {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {message && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+
+      {profile.role === 'student' && (
+        <section className="card">
+          <h3 className="section-title">Peraturan Hostel</h3>
+          <p className="muted mt-1">Sila baca setiap peraturan dan sahkan bacaan. Tiada tarikh akhir pengesahan; anda boleh mengesahkan pada bila-bila masa.</p>
+          {loading ? <p className="muted mt-3">Memuatkan peraturan…</p> : currentRules.length === 0 ? <p className="muted mt-3">Tiada peraturan aktif buat masa ini.</p> : currentRules.map(rule => {
+            const ack = ackFor(rule);
+            return <article key={rule.id} className="mt-4 rounded-xl border p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div><span className="text-xs font-semibold text-teal">{rule.category}</span><h4 className="mt-1 font-bold text-navy">{rule.title}</h4></div>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs">Versi {rule.version || 1}</span>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{rule.content}</p>
+              <p className="mt-3 text-xs text-slate-500">Tarikh kuat kuasa: {rule.effectiveDate || '—'}</p>
+              {ack ? <p className="mt-3 text-sm font-semibold text-emerald-700">✓ Telah disahkan pada {ack.acknowledgedAt?.toDate ? ack.acknowledgedAt.toDate().toLocaleString('ms-MY') : '—'}</p>
+                : <button className="btn-primary mt-3" disabled={busy} onClick={() => acknowledge(rule)}>Saya Telah Baca & Faham</button>}
+            </article>;
+          })}
+        </section>
+      )}
+
+      {isAdmin && (
+        <section className="card">
+          <h3 className="section-title">{isSuper ? 'Pemantauan Pengesahan Semua Hostel' : 'Pemantauan Pengesahan Hostel Ditugaskan'}</h3>
+          <p className="muted mt-1">Admin/Warden boleh melihat status pengesahan sahaja. Hanya Super Admin boleh mengubah peraturan.</p>
+          {currentRules.map(rule => {
+            const confirmed = currentAckCount(rule);
+            const pending = Math.max(0, requiredCount - confirmed);
+            return <div key={rule.id} className="mt-4 rounded-xl border p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2"><div><b>{rule.title}</b><p className="text-xs text-slate-500">{rule.category} · Versi {rule.version || 1}</p></div><span className="text-sm font-semibold">{confirmed}/{requiredCount} disahkan</span></div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-teal" style={{width: requiredCount ? Math.min(100, confirmed / requiredCount * 100) + '%' : '0%'}} /></div>
+              <p className="mt-2 text-sm text-slate-600">{pending} belum disahkan</p>
+              <div className="mt-3 space-y-2">{assignedStudents.map(student => {
+                const ack = acks.find(a => a.ruleId === rule.id && Number(a.version) === Number(rule.version) && a.studentUid === student.uid);
+                return <div key={student.uid} className="flex flex-wrap justify-between gap-2 border-t pt-2 text-sm"><span>{student.fullName || student.email || student.uid}</span><span className={ack ? 'text-emerald-700' : 'text-amber-700'}>{ack ? 'Disahkan' : 'Belum disahkan'}</span></div>;
+              })}</div>
+            </div>;
+          })}
+        </section>
+      )}
+
+      {isSuper && (
+        <section className="card">
+          <h3 className="section-title">Pengurusan Peraturan – Super Admin</h3>
+          <p className="muted mt-1">Peraturan ini sama untuk semua hostel. Setiap perubahan kandungan menghasilkan versi baharu dan memerlukan semua pelajar mengesahkan semula.</p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <label className="text-sm">Tajuk peraturan<input className="field mt-1" value={title} onChange={e => setTitle(e.target.value)} placeholder="Contoh: Waktu keluar masuk hostel"/></label>
+            <label className="text-sm">Kategori<select className="field mt-1" value={category} onChange={e => setCategory(e.target.value)}>{RULE_CATEGORIES.map(item => <option key={item}>{item}</option>)}</select></label>
+            <label className="text-sm md:col-span-2">Tarikh kuat kuasa<input className="field mt-1" type="date" value={effectiveDate} onChange={e => setEffectiveDate(e.target.value)}/></label>
+            <label className="text-sm md:col-span-2">Kandungan peraturan<textarea className="field mt-1 min-h-40" value={content} onChange={e => setContent(e.target.value)} placeholder="Masukkan kandungan penuh peraturan…"/></label>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2"><button className="btn-primary" disabled={busy} onClick={saveRule}>{editing ? 'Simpan Versi Baharu' : 'Terbitkan Peraturan'}</button>{editing && <button className="btn-secondary" onClick={resetForm}>Batal</button>}</div>
+          <div className="mt-5 space-y-3">
+            <h4 className="font-semibold text-navy">Senarai Peraturan ({rules.length})</h4>
+            {rules.map(rule => <div key={rule.id} className="rounded-xl border p-4">
+              <div className="flex flex-wrap justify-between gap-2"><div><b>{rule.title}</b><p className="text-xs text-slate-500">{rule.category} · Versi {rule.version || 1} · {rule.status}</p></div><span className="text-xs text-slate-500">Kuat kuasa: {rule.effectiveDate || '—'}</span></div>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{rule.content}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {rule.status !== 'archived' && <button className="btn-secondary" onClick={() => {setEditing(rule);setTitle(rule.title);setCategory(rule.category);setContent(rule.content);setEffectiveDate(rule.effectiveDate || new Date().toISOString().slice(0,10));window.scrollTo({top:0,behavior:'smooth'});}}>Edit</button>}
+                {rule.status !== 'archived' ? <button className="btn-danger" disabled={busy} onClick={() => archiveRule(rule)}>Arkibkan</button> : <button className="btn-secondary" disabled={busy} onClick={() => restoreRule(rule)}>Aktifkan semula</button>}
+              </div>
+            </div>)}
+            {!rules.length && <p className="muted">Belum ada peraturan diterbitkan.</p>}
+          </div>
+          {archivedRules.length > 0 && <p className="mt-3 text-xs text-slate-500">{archivedRules.length} peraturan diarkibkan; rekod pengesahan lama masih disimpan.</p>}
+        </section>
+      )}
+    </div>
+  );
+}
+
 
 function AuditLog() {
   const [logs, setLogs] = useState([])
