@@ -788,7 +788,7 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
     {selectedStudent&&<section className="card space-y-4">
       <div className="flex justify-between gap-2"><h3 className="section-title">Butiran Pelajar: {selectedStudent.fullName}</h3><button className="btn-secondary" onClick={()=>setSelectedStudent(null)}>Tutup</button></div>
       <div className="grid gap-3 sm:grid-cols-2">
-        {['fullName','phone','programme','hostelId','room'].map(key=><label className="text-sm font-medium capitalize" key={key}>{key==='hostelId'?'Hostel':key}<input className="field mt-1" value={editForm?.[key]||''} onChange={e=>setEditForm(f=>({...f,[key]:e.target.value,...(key==='hostelId'?{hostelName:hostels.find(h=>h.id===e.target.value)?.name||''}:{})}))}/></label>)}
+        {['fullName','phone','programme','hostelId','room'].map(key=><label className="text-sm font-medium capitalize" key={key}>{key==='hostelId'?'Hostel':key}{key==='hostelId'?<select className="field mt-1" value={editForm?.hostelId||''} onChange={e=>setEditForm(f=>({...f,hostelId:e.target.value,hostelName:hostels.find(h=>h.id===e.target.value)?.name||''}))}><option value="">Pilih hostel</option>{editForm?.hostelId&&!hostels.some(h=>h.id===editForm.hostelId)&&<option value={editForm.hostelId}>{editForm.hostelName||'Hostel tidak aktif / tiada dalam senarai'}</option>}{hostels.map(h=><option key={h.id} value={h.id}>{h.name}</option>)}</select>:<input className="field mt-1" value={editForm?.[key]||''} onChange={e=>setEditForm(f=>({...f,[key]:e.target.value}))}/>}</label>)}
       </div>
       <div className="flex flex-wrap gap-2"><button className="btn-primary" disabled={busy} onClick={saveAdminEdit}>Simpan perubahan profil</button>{isSuper&&<button className="btn-danger" disabled={busy} onClick={()=>removeStudent(selectedStudent)}>Padam Profil (Super Admin)</button>}</div>
       <div className="border-t pt-4"><h4 className="font-semibold">Maklumat Pendaftaran & Emergency Contact</h4><p className="muted mt-1">Maklumat waris dipaparkan bersama rekod pendaftaran untuk Admin/Warden dan Super Admin.</p>{[0,1].map(i=>{const c=editContacts[i]||emptyContact();const digits=(c.phone||'').replace(/[^0-9]/g,'');const waNumber=digits.startsWith('0')?'6'+digits:digits;return <div key={i} className="mt-3 rounded-xl border p-3 space-y-3"><div><b>Emergency Contact {i+1}</b><p className="text-sm font-semibold text-navy mt-1">{c.fullName||'Nama belum diisi'}</p><p className="text-sm text-slate-600">{c.relationship||'Hubungan tidak dinyatakan'} · {c.phone||'No. telefon tiada'}</p><p className="text-sm text-slate-500">{c.address||'Alamat tidak diisi'}</p></div>{c.phone&&<div className="flex flex-wrap gap-2"><a className="btn-secondary inline-flex items-center gap-2" href={'tel:'+c.phone}><Phone size={16}/> Call</a><a className="btn-primary inline-flex items-center gap-2" href={'https://wa.me/'+waNumber} target="_blank" rel="noreferrer"><MessageSquare size={16}/> WhatsApp</a></div>}<div className="grid gap-2 sm:grid-cols-2 border-t pt-3">{['fullName','phone','relationship','address'].map(k=><label key={k} className="text-xs font-medium capitalize">{k==='fullName'?'Nama penuh':k==='phone'?'Nombor telefon':k==='relationship'?'Hubungan':'Alamat'}<input className="field mt-1" placeholder={k} value={c[k]||''} onChange={e=>setEditContacts(old=>old.map((item,j)=>j===i?{...item,[k]:e.target.value}:item))}/></label>)}</div></div>})}<button className="btn-primary mt-3" disabled={busy} onClick={saveAdminContacts}>Simpan Emergency Contact</button></div>
@@ -878,21 +878,50 @@ function AdminOverview() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    return onSnapshot(
+    let userRows = []
+    let profileIds = new Set()
+    let usersReady = false
+    let profilesReady = false
+
+    const updateCounts = () => {
+      if (!usersReady || !profilesReady) return
+
+      const activeStudentUids = new Set(
+        userRows
+          .filter(item => item.role === 'student' && item.status === 'active')
+          .map(item => item.uid)
+      )
+
+      setStudents([...profileIds].filter(uid => activeStudentUids.has(uid)).length)
+      setAdmins(
+        userRows.filter(item => item.role === 'admin' && item.status === 'active').length
+      )
+    }
+
+    const stopUsers = onSnapshot(
       collection(db, 'users'),
       snapshot => {
-        const rows = snapshot.docs.map(item => item.data())
-
-        setStudents(
-          rows.filter(item => item.role === 'student' && item.status === 'active').length
-        )
-
-        setAdmins(
-          rows.filter(item => item.role === 'admin' && item.status === 'active').length
-        )
+        userRows = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }))
+        usersReady = true
+        updateCounts()
       },
       e => setError(friendlyError(e))
     )
+
+    const stopProfiles = onSnapshot(
+      collection(db, 'studentProfiles'),
+      snapshot => {
+        profileIds = new Set(snapshot.docs.map(item => item.id))
+        profilesReady = true
+        updateCounts()
+      },
+      e => setError(friendlyError(e))
+    )
+
+    return () => {
+      stopUsers()
+      stopProfiles()
+    }
   }, [])
 
   return (
