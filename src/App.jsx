@@ -1754,9 +1754,9 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
   );
 
   if (!isAdmin) return <section className="card"><p>Akses tidak dibenarkan.</p></section>;
+  const visibleRecords = records.filter(r => r.date >= rangeStart && r.date <= date);
   const byStudent = new Map(visibleRecords.map(item => [item.studentUid, item]));
   const counts = ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED','LATE RETURN'].map(s => ({ status: s, count: visibleRecords.filter(r => r.status === s).length }));
-  const visibleRecords = records.filter(r => r.date >= rangeStart && r.date <= date);
   return (
     <div className="space-y-5">
       <section className="card">
