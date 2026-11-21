@@ -1679,7 +1679,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
       });
       const distance = geoDistance(gps.lat, gps.lng, DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng);
       const verified = distance <= DAILY_GEOFENCE.radius;
-      const finalStatus = verified ? 'AT HOSTEL' : status;
+      const finalStatus = verified ? 'AT HOSTEL' : (status === 'AT HOSTEL' ? 'NOT VERIFIED' : status);
       const previous = record;
       await setDoc(doc(db, 'dailyStudentStatuses', docId), {
         studentUid: user.uid, studentName: profile.fullName || profile.displayName || '',
