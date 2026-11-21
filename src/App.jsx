@@ -1334,6 +1334,15 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
   const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
 
   useEffect(() => {
+    if (profile.role !== 'student') return undefined;
+    let active = true;
+    getDoc(doc(db, 'studentProfiles', user.uid)).then(snap => {
+      if (active) setStudentProfile(snap.exists() ? snap.data() : null);
+    }).catch(e => { if (active) setError(friendlyError(e)); });
+    return () => { active = false; };
+  }, [profile.role, user.uid]);
+
+  useEffect(() => {
     const rulesQuery = profile.role === 'student'
       ? query(collection(db, 'hostelRules'), where('status', '==', 'active'))
       : collection(db, 'hostelRules');
@@ -1630,6 +1639,7 @@ function MovementDestinationMap({ selected, onSelect }) {
 }
 
 function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
+  const [studentProfile, setStudentProfile] = useState(null);
   const [type, setType] = useState('OUTING');
   const [startDate, setStartDate] = useState(malaysiaDateKey());
   const [endDate, setEndDate] = useState(malaysiaDateKey());
@@ -1700,13 +1710,13 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
   const submit = async () => {
     setBusy(true); setError('');
     try {
-      if (!profile.hostelId) throw new Error('Profil belum mempunyai penempatan hostel.');
+      if (!studentProfile?.hostelId) throw new Error('Rekod penempatan hostel belum lengkap dalam profil pelajar. Sila hubungi Warden untuk semakan.');
       if (!destinationPin || !destination.trim() || !reason.trim()) throw new Error('Sila cari dan pilih destinasi pada peta serta isi sebab permohonan.');
       if (endDate < startDate) throw new Error('Tarikh kembali tidak boleh lebih awal daripada tarikh keluar.');
       if (!departureTime || !returnTime) throw new Error('Masa keluar dan masa kembali wajib diisi.');
       await addDoc(collection(db, 'hostelMovementRequests'), {
-        studentUid: user.uid, studentName: profile.fullName || '', studentEmail: profile.email || user.email || '',
-        hostelId: profile.hostelId, hostelName: profile.hostelName || '', room: profile.room || '',
+        studentUid: user.uid, studentName: studentProfile.fullName || profile.fullName || '', studentEmail: studentProfile.email || profile.email || user.email || '',
+        hostelId: studentProfile.hostelId, hostelName: studentProfile.hostelName || '', room: studentProfile.room || '',
         type, startDate, endDate, departureTime, returnTime, destination: destination.trim(), destinationLat: destinationPin.lat, destinationLng: destinationPin.lng, destinationAddress: destinationPin.label, durationDays: calculateDays(startDate, endDate), reason: reason.trim(),
         approvalStatus: 'pending', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
