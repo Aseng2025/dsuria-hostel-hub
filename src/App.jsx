@@ -917,6 +917,8 @@ function AdminManagement({ me, setNotice }) {
   const [role, setRole] = useState('admin')
   const [hostelIds, setHostelIds] = useState([])
   const [hostelName, setHostelName] = useState('')
+  const [roomCount, setRoomCount] = useState('')
+  const [capacityPerRoom, setCapacityPerRoom] = useState('')
   const [editing, setEditing] = useState(null)
 
   const [message, setMessage] = useState('')
