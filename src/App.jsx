@@ -108,6 +108,9 @@ export default function App() {
             })
           } else {
             await updateDoc(userRef, {
+              role: 'superadmin',
+              status: 'active',
+              hostelIds: [],
               lastLoginAt: serverTimestamp(),
             })
           }
