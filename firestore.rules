@@ -295,8 +295,10 @@ service cloud.firestore {
           )
         )
       ) || (
-        isAdmin()
-        && assignedToHostel(resource.data.hostelId)
+        (
+          isSuperAdmin()
+          || (isAdmin() && assignedToHostel(resource.data.hostelId))
+        )
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'approvalStatus', 'approvedBy', 'approvedByEmail', 'approvedAt', 'rejectionReason', 'updatedAt'
         ])
@@ -357,9 +359,14 @@ service cloud.firestore {
       allow read: if isSuperAdmin()
         || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds);
 
-      allow create: if isAdmin()
-        && request.resource.data.hostelId is string
-        && assignedToHostel(request.resource.data.hostelId)
+      allow create: if (
+          isSuperAdmin()
+          || (
+            isAdmin()
+            && request.resource.data.hostelId is string
+            && assignedToHostel(request.resource.data.hostelId)
+          )
+        )
         && request.resource.data.performedBy == request.auth.uid
         && request.resource.data.performedByEmail == request.auth.token.email
         && request.resource.data.action in ['STUDENT_APPROVED', 'STUDENT_REJECTED'];
