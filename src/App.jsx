@@ -9,10 +9,9 @@ import {
   Home, LogIn, LogOut, ShieldCheck, UserRound, Phone, Save,
   AlertCircle, CheckCircle2, CalendarCheck, MapPin, Clock,
   Sparkles, MessageSquare, Wallet, Receipt, Siren, BookOpen,
-  Award, Settings, ArrowLeft, LayoutDashboard, Trash, Upload, Image as ImageIcon, History, Pencil,
+  Award, Settings, ArrowLeft, LayoutDashboard, Trash, History, Pencil,
 } from 'lucide-react'
-import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
-import { auth, db, provider, storage, SUPER_ADMIN_EMAIL } from './firebase'
+import { auth, db, provider, SUPER_ADMIN_EMAIL } from './firebase'
 
 const ROLE_LABEL = {
   superadmin: 'Super Admin',
@@ -782,13 +781,12 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
       <div className="flex flex-wrap justify-between gap-2"><div><h3 className="section-title">{initialTab==='emergency'?'Emergency Contact Pelajar':'Student Management'}</h3><p className="muted mt-1">{isSuper?'Akses penuh semua hostel.':'Rekod terhad kepada hostel yang ditugaskan.'}</p></div><span className="text-xs text-slate-500">{hostelIds.length} hostel dalam skop</span></div>
       {error&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}{message&&<p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
       <div className="mt-4 grid gap-3 sm:grid-cols-2"><input className="field" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari nama, emel, telefon, program atau bilik"/><select className="field" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">Semua status</option><option value="draft">Draft</option><option value="pending">Pending Approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
-      <div className="mt-4 space-y-3">{filtered.map(st=><div key={st.uid} className="rounded-xl border p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3">{st.profilePhotoUrl?<img src={st.profilePhotoUrl} alt="Gambar pelajar" className="h-14 w-14 rounded-full object-cover"/>:<div className="h-14 w-14 rounded-full bg-slate-100 grid place-items-center"><UserRound/></div>}<div><b>{st.fullName||'Nama belum diisi'}</b><p className="text-xs text-slate-500">{st.email} · {st.hostelName||'—'} · Bilik {st.room||'—'}</p><span className="text-xs font-semibold">{st.approvalStatus}</span></div></div><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={()=>setSelectedStudent(st)}>Butiran & Edit</button>{st.approvalStatus!=='approved'&&<button className="btn-primary" disabled={busy} onClick={()=>decide(st,'approved')}>Approve</button>}{st.approvalStatus!=='rejected'&&<button className="btn-danger" disabled={busy} onClick={()=>{setSelectedStudent(st);setError('Masukkan sebab penolakan pada bahagian butiran pelajar.')}}>Reject</button>}</div></div></div>)}</div>
+      <div className="mt-4 space-y-3">{filtered.map(st=><div key={st.uid} className="rounded-xl border p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="h-14 w-14 rounded-full bg-teal/10 text-teal font-bold grid place-items-center">{(st.fullName||'?').trim().split(/\s+/).slice(0,2).map(part=>part[0]?.toUpperCase()).join('')}</div><div><b>{st.fullName||'Nama belum diisi'}</b><p className="text-xs text-slate-500">{st.email} · {st.hostelName||'—'} · Bilik {st.room||'—'}</p><span className="text-xs font-semibold">{st.approvalStatus}</span></div></div><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={()=>setSelectedStudent(st)}>Butiran & Edit</button>{st.approvalStatus!=='approved'&&<button className="btn-primary" disabled={busy} onClick={()=>decide(st,'approved')}>Approve</button>}{st.approvalStatus!=='rejected'&&<button className="btn-danger" disabled={busy} onClick={()=>{setSelectedStudent(st);setError('Masukkan sebab penolakan pada bahagian butiran pelajar.')}}>Reject</button>}</div></div></div>)}</div>
       {filtered.length===0&&<p className="muted mt-4">Tiada rekod pelajar ditemui.</p>}
     </section>
 <section className="card"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="section-title flex items-center gap-2"><History size={18}/> Student Activity Log</h3>{isSuper&&<button className="btn-secondary" onClick={()=>{const rows=[["Tarikh","Pelajar","Tindakan","Pelaksana","Butiran"],...allLogs.map(log=>[log.createdAt?.toDate?.().toISOString()||"",log.studentEmail||log.studentUid,log.action,log.performedByEmail,JSON.stringify(log.details||{})])];const csv=rows.map(row=>row.map(value=>`"${String(value).replace(/"/g,'""')}"`).join(",")).join("\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="student-activity-log.csv";a.click();URL.revokeObjectURL(url);}}>Eksport CSV</button>}</div>{allLogs.length===0?<p className="muted mt-3">Tiada aktiviti direkodkan.</p>:allLogs.slice(0,100).map(log=><div key={log.id} className="border-b py-2 text-sm"><b>{log.action}</b><p>{log.studentEmail||log.studentUid}</p><p className="text-xs text-slate-500">{log.performedByEmail} · {log.createdAt?.toDate?.().toLocaleString("ms-MY")||"Masa tidak tersedia"}</p></div>)}</section>
     {selectedStudent&&<section className="card space-y-4">
       <div className="flex justify-between gap-2"><h3 className="section-title">Butiran Pelajar: {selectedStudent.fullName}</h3><button className="btn-secondary" onClick={()=>setSelectedStudent(null)}>Tutup</button></div>
-      {selectedStudent.profilePhotoUrl&&<img src={selectedStudent.profilePhotoUrl} alt="Gambar profil pelajar" className="h-28 w-28 rounded-xl object-cover"/>}
       <div className="grid gap-3 sm:grid-cols-2">
         {['fullName','phone','programme','hostelId','room'].map(key=><label className="text-sm font-medium capitalize" key={key}>{key==='hostelId'?'Hostel':key}<input className="field mt-1" value={editForm?.[key]||''} onChange={e=>setEditForm(f=>({...f,[key]:e.target.value,...(key==='hostelId'?{hostelName:hostels.find(h=>h.id===e.target.value)?.name||''}:{})}))}/></label>)}
       </div>
@@ -807,8 +805,6 @@ function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
   const [originalContacts,setOriginalContacts]=useState([emptyContact(),emptyContact()]);
   const [hostels,setHostels]=useState([]);
   const [logs,setLogs]=useState([]);
-  const [photoFile,setPhotoFile]=useState(null);
-  const [photoUrl,setPhotoUrl]=useState('');
   const [status,setStatus]=useState('draft');
   const [rejectionReason,setRejectionReason]=useState('');
   const [loading,setLoading]=useState(true);
@@ -823,7 +819,7 @@ function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
       if(!active)return;
       if(p.exists()){
         const d=p.data(); setForm(f=>({...f,...d,hostelId:d.hostelId||'',hostelName:d.hostelName||''}));
-        setStatus(d.approvalStatus||'draft'); setPhotoUrl(d.profilePhotoUrl||''); setRejectionReason(d.rejectionReason||'');
+        setStatus(d.approvalStatus||'draft'); setRejectionReason(d.rejectionReason||'');
       }
       if(c.exists()){const loaded=[0,1].map(i=>({...emptyContact(),...(c.data().contacts?.[i]||{})}));setContacts(loaded);setOriginalContacts(loaded);}
     }).catch(e=>setError(friendlyError(e))).finally(()=>active&&setLoading(false));
@@ -849,30 +845,21 @@ function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
     setBusy(true);
     try{
       const selected=hostels.find(h=>h.id===form.hostelId);
-      let nextPhotoUrl=photoUrl, photoPath='';
-      if(photoFile){
-        if(photoFile.size>10*1024*1024)throw new Error('Saiz gambar melebihi had maksimum 10 MB.');
-        if(!['image/jpeg','image/png','image/webp'].includes(photoFile.type))throw new Error('Format gambar mesti JPG, PNG atau WebP.');
-        photoPath=`student-profile-photos/${user.uid}/profile`;
-        const fileRef=storageRef(storage,photoPath);
-        await uploadBytes(fileRef,photoFile,{contentType:photoFile.type});
-        nextPhotoUrl=await getDownloadURL(fileRef);
-      }
       const batch=writeBatch(db), profileRef=doc(db,'studentProfiles',user.uid), contactRef=doc(db,'emergencyContacts',user.uid);
       const nextStatus=submit?'pending':status;
-      const payload={uid:user.uid,email:profile.email,fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),profilePhotoUrl:nextPhotoUrl,...(photoPath?{profilePhotoPath:photoPath}:{}),approvalStatus:nextStatus,rejectionReason:submit?'':rejectionReason,updatedAt:serverTimestamp(),...(submit?{submittedAt:serverTimestamp(),submissionVersion:(Number(form.submissionVersion)||0)+1}:{})};
+      const payload={uid:user.uid,email:profile.email,fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),approvalStatus:nextStatus,rejectionReason:submit?'':rejectionReason,updatedAt:serverTimestamp(),...(submit?{submittedAt:serverTimestamp(),submissionVersion:(Number(form.submissionVersion)||0)+1}:{})};
       batch.set(profileRef,payload,{merge:true});
       batch.set(contactRef,{uid:user.uid,studentEmail:profile.email,contacts:contacts.map(c=>({fullName:c.fullName.trim(),phone:c.phone.trim(),relationship:c.relationship.trim(),address:c.address.trim()})),updatedAt:serverTimestamp()},{merge:true});
       const logRef=doc(collection(db,'studentActivityLogs'));
-      batch.set(logRef,{studentUid:user.uid,studentEmail:profile.email,hostelId:form.hostelId,action:submit?(status==='approved'?'RESUBMITTED':status==='rejected'?'RESUBMITTED':'SUBMITTED'):'DRAFT_SAVED',details:{statusBefore:status,statusAfter:nextStatus,before:{...originalData,emergencyContacts:originalContacts},after:{fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),profilePhotoUrl:nextPhotoUrl,emergencyContacts:contacts}},performedBy:user.uid,performedByEmail:profile.email,createdAt:serverTimestamp()});
+      batch.set(logRef,{studentUid:user.uid,studentEmail:profile.email,hostelId:form.hostelId,action:submit?(status==='approved'?'RESUBMITTED':status==='rejected'?'RESUBMITTED':'SUBMITTED'):'DRAFT_SAVED',details:{statusBefore:status,statusAfter:nextStatus,before:{...originalData,emergencyContacts:originalContacts},after:{fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),emergencyContacts:contacts}},performedBy:user.uid,performedByEmail:profile.email,createdAt:serverTimestamp()});
       await batch.commit();
-      setStatus(nextStatus);setPhotoUrl(nextPhotoUrl);setPhotoFile(null);setRejectionReason('');setOriginalData({fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),profilePhotoUrl:nextPhotoUrl});setOriginalContacts(contacts);
+      setStatus(nextStatus);setRejectionReason('');setOriginalData({fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim()});setOriginalContacts(contacts);
       setNotice(submit?'Permohonan berjaya dihantar. Status: Pending Approval.':'Draf pendaftaran berjaya disimpan.');
     }catch(e){setError(friendlyError(e));}finally{setBusy(false);}
   };
   if(loading)return <section className="card">Memuatkan pendaftaran pelajar…</section>;
   return <div className="space-y-5">
-    <section className="card"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="section-title">Student Registration</h3><p className="muted mt-1">Lengkapkan profil, gambar dan dua Emergency Contact.</p></div><span className={status==='approved'?'rounded-full bg-emerald-50 px-3 py-1 text-sm text-emerald-700':status==='rejected'?'rounded-full bg-red-50 px-3 py-1 text-sm text-red-700':'rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-700'}>{status==='approved'?'Approved':status==='rejected'?'Rejected':status==='pending'?'Pending Approval':'Draft'}</span></div>
+    <section className="card"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="section-title">Student Registration</h3><p className="muted mt-1">Lengkapkan profil dan dua Emergency Contact.</p></div><span className={status==='approved'?'rounded-full bg-emerald-50 px-3 py-1 text-sm text-emerald-700':status==='rejected'?'rounded-full bg-red-50 px-3 py-1 text-sm text-red-700':'rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-700'}>{status==='approved'?'Approved':status==='rejected'?'Rejected':status==='pending'?'Pending Approval':'Draft'}</span></div>
     {rejectionReason&&status==='rejected'&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700"><b>Sebab penolakan:</b> {rejectionReason}</p>}
     {locked&&<p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Permohonan telah dihantar dan dikunci sementara menunggu semakan Admin/Warden.</p>}
     {error&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
