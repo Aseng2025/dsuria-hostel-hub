@@ -639,6 +639,52 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
   const [message, setMessage] = useState('');
 
   useEffect(() => {
+    const stopHostels = onSnapshot(
+      query(collection(db, 'hostels'), where('status', '==', 'active')),
+      snapshot => {
+        const rows = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+        setHostels(rows);
+        if (isSuper) setHostelIds(rows.map(hostel => hostel.id));
+      },
+      e => setError(friendlyError(e))
+    );
+
+    if (isSuper) {
+      setLoading(false);
+      return stopHostels;
+    }
+
+    const email = (profile.email || '').trim().toLowerCase();
+    if (!email) {
+      setError('Emel akaun tidak dapat dikenal pasti.');
+      setLoading(false);
+      stopHostels();
+      return undefined;
+    }
+
+    const stopApproved = onSnapshot(
+      doc(db, 'approvedUsers', email),
+      snapshot => {
+        if (!snapshot.exists() || snapshot.data().status !== 'active') {
+          setError('Akses Admin tidak aktif. Sila hubungi Super Admin.');
+          setLoading(false);
+          return;
+        }
+        setHostelIds(Array.isArray(snapshot.data().hostelIds) ? snapshot.data().hostelIds : []);
+      },
+      e => {
+        setError(friendlyError(e));
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      stopApproved();
+      stopHostels();
+    };
+  }, [profile.email, isSuper]);
+
+  useEffect(() => {
     setLoading(true);
     setError('');
 
@@ -677,46 +723,6 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
 
     return stopStudents;
   }, [hostelIds, isSuper]);
-
-  useEffect(() => {
-    if (hostelIds.length === 0) {
-      setStudents([]);
-      setLoading(false);
-      return undefined;
-    }
-
-    if (hostelIds.length > 30) {
-      setError('Penempatan melebihi had carian sistem. Hubungi Super Admin.');
-      setLoading(false);
-      return undefined;
-    }
-
-    setLoading(true);
-    const studentsQuery = query(
-      collection(db, 'studentProfiles'),
-      where('hostelId', 'in', hostelIds)
-    );
-
-    const stopStudents = onSnapshot(
-      studentsQuery,
-      snapshot => {
-        const rows = snapshot.docs.map(item => ({
-          uid: item.id,
-          ...item.data(),
-          approvalStatus: item.data().approvalStatus || 'pending',
-        }));
-        rows.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
-        setStudents(rows);
-        setLoading(false);
-      },
-      e => {
-        setError(friendlyError(e));
-        setLoading(false);
-      }
-    );
-
-    return stopStudents;
-  }, [hostelIds]);
 
   useEffect(() => {
     let active = true;
