@@ -534,6 +534,92 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+
+    // Daily Student Status: students manage only their own daily record.
+    match /dailyStudentStatuses/{statusId} {
+      allow read: if signedIn() && (
+        resource.data.studentUid == request.auth.uid
+        || isSuperAdmin()
+        || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds)
+      );
+
+      allow create: if isStudent()
+        && request.resource.data.keys().hasOnly([
+          'studentUid','studentName','studentEmail','hostelId','hostelName','room','date',
+          'status','locationVerified','latitude','longitude','accuracy','distanceFromHostel',
+          'lastLocationAt','updatedAt','updatedBy','createdAt'
+        ])
+        && request.resource.data.studentUid == request.auth.uid
+        && request.resource.data.hostelId == get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.hostelId
+        && get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.approvalStatus == 'approved'
+        && request.resource.data.date is string
+        && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
+        && request.resource.data.locationVerified is bool
+        && request.resource.data.latitude is number
+        && request.resource.data.longitude is number
+        && request.resource.data.accuracy is number
+        && request.resource.data.distanceFromHostel is number
+        && request.resource.data.updatedBy == request.auth.uid
+        && statusId == request.auth.uid + '_' + request.resource.data.date;
+
+      allow update: if (
+        isStudent()
+        && resource.data.studentUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'studentName','studentEmail','hostelName','room','status','locationVerified',
+          'latitude','longitude','accuracy','distanceFromHostel','lastLocationAt','updatedAt','updatedBy'
+        ])
+        && request.resource.data.studentUid == resource.data.studentUid
+        && request.resource.data.hostelId == resource.data.hostelId
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
+        && request.resource.data.locationVerified is bool
+        && request.resource.data.latitude is number
+        && request.resource.data.longitude is number
+        && request.resource.data.updatedBy == request.auth.uid
+      ) || (
+        (isSuperAdmin() || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status','correctionReason','correctedBy','updatedBy','updatedAt'
+        ])
+        && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED','LATE RETURN']
+        && request.resource.data.correctionReason is string
+        && request.resource.data.correctionReason.size() > 0
+        && request.resource.data.correctedBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+      );
+
+      allow delete: if false;
+    }
+
+    // Immutable audit records for daily status changes and Warden corrections.
+    match /studentStatusAuditLogs/{logId} {
+      allow read: if signedIn() && (
+        resource.data.studentUid == request.auth.uid
+        || isSuperAdmin()
+        || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds)
+      );
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'studentUid','studentName','hostelId','date','oldStatus','newStatus',
+          'locationVerified','distanceFromHostel','reason','action',
+          'performedBy','performedByEmail','createdAt'
+        ])
+        && request.resource.data.studentUid is string
+        && request.resource.data.hostelId is string
+        && request.resource.data.date is string
+        && request.resource.data.newStatus is string
+        && request.resource.data.action in ['STUDENT_STATUS_UPDATED','WARDEN_STATUS_CORRECTION']
+        && request.resource.data.performedBy == request.auth.uid
+        && request.resource.data.performedByEmail == request.auth.token.email
+        && (
+          (isStudent() && request.resource.data.studentUid == request.auth.uid)
+          || isSuperAdmin()
+          || (isAdmin() && request.resource.data.hostelId in userData(request.auth.uid).hostelIds)
+        );
+      allow update, delete: if false;
+    }
+
     // Deny everything not explicitly allowed above
     match /{document=**} {
       allow read, write: if false;
