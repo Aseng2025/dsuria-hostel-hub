@@ -16,8 +16,8 @@ service cloud.firestore {
       return /databases/$(database)/documents/users/$(uid);
     }
 
-    function approvedPath(email) {
-      return /databases/$(database)/documents/approvedUsers/$(email);
+    function approvedPath(userEmail) {
+      return /databases/$(database)/documents/approvedUsers/$(userEmail);
     }
 
     function hasUser(uid) {
@@ -28,10 +28,14 @@ service cloud.firestore {
       return get(userPath(uid)).data;
     }
 
+    function email() {
+      return request.auth.token.email.lower();
+    }
+
     function isSuperAdmin() {
       return signedIn()
-        && request.auth.token.email == 'mhybsi91@gmail.com'
-        && request.auth.token.email_verified == true;
+        && request.auth.token.email_verified == true
+        && email() == 'mhybsi91@gmail.com';
     }
 
     function isActiveUser() {
@@ -50,11 +54,11 @@ service cloud.firestore {
         && userData(request.auth.uid).role == 'student';
     }
 
-    function isApprovedEmail(email) {
+    function isApprovedEmail(userEmail) {
       return signedIn()
-        && request.auth.token.email == email
-        && exists(approvedPath(email))
-        && get(approvedPath(email)).data.status == 'active';
+        && email() == userEmail
+        && exists(approvedPath(userEmail))
+        && get(approvedPath(userEmail)).data.status == 'active';
     }
 
     function validStudentHostel(hostelId) {
@@ -82,6 +86,36 @@ service cloud.firestore {
             )
           )
         );
+    }
+
+    function validApprovedUser() {
+      return request.resource.data.keys().hasOnly([
+        'role',
+        'status',
+        'hostelIds',
+        'addedBy',
+        'addedAt',
+        'updatedAt'
+      ])
+      && request.resource.data.keys().hasAll([
+        'role',
+        'status',
+        'hostelIds'
+      ])
+      && request.resource.data.role in ['admin', 'student']
+      && request.resource.data.status in ['active', 'inactive']
+      && request.resource.data.hostelIds is list
+      && (
+        (
+          request.resource.data.role == 'admin'
+          && request.resource.data.hostelIds.size() > 0
+        )
+        ||
+        (
+          request.resource.data.role == 'student'
+          && request.resource.data.hostelIds.size() == 0
+        )
+      );
     }
 
     function validProfileData() {
@@ -119,29 +153,44 @@ service cloud.firestore {
       && request.resource.data.uid == request.auth.uid
       && request.resource.data.studentEmail == request.auth.token.email
       && request.resource.data.contacts is list
-      && request.resource.data.contacts.size() == 2;
+      && request.resource.data.contacts.size() == 2
+      && request.resource.data.contacts[0].keys().hasOnly([
+        'fullName', 'phone', 'relationship', 'address'
+      ])
+      && request.resource.data.contacts[1].keys().hasOnly([
+        'fullName', 'phone', 'relationship', 'address'
+      ])
+      && request.resource.data.contacts[0].fullName is string
+      && request.resource.data.contacts[0].phone is string
+      && request.resource.data.contacts[0].relationship is string
+      && request.resource.data.contacts[0].address is string
+      && request.resource.data.contacts[1].fullName is string
+      && request.resource.data.contacts[1].phone is string
+      && request.resource.data.contacts[1].relationship is string
+      && request.resource.data.contacts[1].address is string;
     }
 
     // =========================================
     // APPROVED USERS
-    // Super Admin manages approved accounts
     // =========================================
 
-    match /approvedUsers/{email} {
+    match /approvedUsers/{userEmail} {
 
       allow read: if isSuperAdmin()
         || (
           signedIn()
-          && request.auth.token.email == email
+          && email() == userEmail
         );
 
-      allow create, update, delete: if isSuperAdmin();
+      allow create, update: if isSuperAdmin()
+        && userEmail.matches('^[^@]+@[^@]+\\.[^@]+$')
+        && validApprovedUser();
+
+      allow delete: if isSuperAdmin();
     }
 
     // =========================================
     // USERS
-    // User can read own account.
-    // Super Admin manages all accounts.
     // =========================================
 
     match /users/{uid} {
@@ -154,18 +203,18 @@ service cloud.firestore {
         && request.resource.data.email == request.auth.token.email
         && (
           (
-            request.auth.token.email == 'mhybsi91@gmail.com'
+            isSuperAdmin()
             && request.resource.data.role == 'superadmin'
             && request.resource.data.status == 'active'
           )
           ||
           (
-            isApprovedEmail(request.auth.token.email)
+            isApprovedEmail(email())
             && request.resource.data.role ==
-              get(approvedPath(request.auth.token.email)).data.role
+              get(approvedPath(email())).data.role
             && request.resource.data.status == 'active'
             && request.resource.data.hostelIds ==
-              get(approvedPath(request.auth.token.email)).data.hostelIds
+              get(approvedPath(email())).data.hostelIds
           )
         );
 
@@ -177,7 +226,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['displayName', 'lastLoginAt', 'hostelIds'])
           && request.resource.data.hostelIds ==
-            get(approvedPath(request.auth.token.email)).data.hostelIds
+            get(approvedPath(email())).data.hostelIds
         );
 
       allow delete: if isSuperAdmin();
@@ -185,8 +234,6 @@ service cloud.firestore {
 
     // =========================================
     // HOSTELS
-    // Students can read active hostels.
-    // Super Admin manages hostel records.
     // =========================================
 
     match /hostels/{hostelId} {
@@ -202,20 +249,13 @@ service cloud.firestore {
 
     // =========================================
     // STUDENT PROFILES
-    // Students manage their own profile.
-    // Admin reads only assigned hostel records.
     // =========================================
 
     match /studentProfiles/{studentUid} {
 
       allow read: if canReadStudentRecord(studentUid);
 
-      allow create: if signedIn()
-        && request.auth.uid == studentUid
-        && isStudent()
-        && validProfileData();
-
-      allow update: if signedIn()
+      allow create, update: if signedIn()
         && request.auth.uid == studentUid
         && isStudent()
         && validProfileData();
@@ -225,8 +265,6 @@ service cloud.firestore {
 
     // =========================================
     // EMERGENCY CONTACTS
-    // Student manages own emergency contacts.
-    // Admin reads records for assigned hostels.
     // =========================================
 
     match /emergencyContacts/{studentUid} {
@@ -243,8 +281,6 @@ service cloud.firestore {
 
     // =========================================
     // ADMIN AUDIT LOGS
-    // Super Admin only.
-    // No update or delete permitted.
     // =========================================
 
     match /adminAuditLogs/{logId} {
@@ -252,6 +288,16 @@ service cloud.firestore {
       allow read: if isSuperAdmin();
 
       allow create: if isSuperAdmin()
+        && request.resource.data.keys().hasOnly([
+          'action',
+          'targetEmail',
+          'oldRole',
+          'newRole',
+          'reason',
+          'performedBy',
+          'performedByEmail',
+          'createdAt'
+        ])
         && request.resource.data.performedBy == request.auth.uid
         && request.resource.data.performedByEmail == request.auth.token.email;
 
@@ -260,7 +306,6 @@ service cloud.firestore {
 
     // =========================================
     // DEFAULT DENY
-    // All unspecified collections are protected.
     // =========================================
 
     match /{document=**} {
