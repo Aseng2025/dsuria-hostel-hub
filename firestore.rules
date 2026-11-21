@@ -258,7 +258,14 @@ service cloud.firestore {
 
     match /studentProfiles/{studentUid} {
 
-      allow read: if canReadStudentRecord(studentUid);
+      // Query Admin disahkan melalui hostelId pada setiap dokumen.
+      // Ini membolehkan query where('hostelId', 'in', assignedHostelIds) lulus.
+      allow read: if signedIn()
+        && (
+          request.auth.uid == studentUid
+          || isSuperAdmin()
+          || (isAdmin() && assignedToHostel(resource.data.hostelId))
+        );
 
       // Pelajar boleh cipta profil. Selepas itu mereka hanya boleh kemas kini
       // maklumat peribadi; status kelulusan kekal di bawah kawalan Admin.
