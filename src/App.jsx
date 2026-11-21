@@ -2,16 +2,17 @@
 import { useEffect, useState } from 'react'
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import {
-  addDoc, collection, doc, getDoc, onSnapshot, query,
-  serverTimestamp, setDoc, updateDoc, where,
+  addDoc, collection, deleteDoc, doc, getDoc, onSnapshot, query,
+  serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from 'firebase/firestore'
 import {
   Home, LogIn, LogOut, ShieldCheck, UserRound, Phone, Save,
   AlertCircle, CheckCircle2, CalendarCheck, MapPin, Clock,
   Sparkles, MessageSquare, Wallet, Receipt, Siren, BookOpen,
-  Award, Settings, ArrowLeft, LayoutDashboard, Trash,
+  Award, Settings, ArrowLeft, LayoutDashboard, Trash, Upload, Image as ImageIcon, History, Pencil,
 } from 'lucide-react'
-import { auth, db, provider, SUPER_ADMIN_EMAIL } from './firebase'
+import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
+import { auth, db, provider, storage, SUPER_ADMIN_EMAIL } from './firebase'
 
 const ROLE_LABEL = {
   superadmin: 'Super Admin',
@@ -28,7 +29,7 @@ const emptyContact = () => ({
 
 const MODULES = [
   { id: 'home-dashboard', title: 'Home Dashboard', desc: 'Ringkasan aktiviti dan makluman hostel', icon: LayoutDashboard, ready: true },
-  { id: 'profile', title: 'Student Registration & Profile', desc: 'Profil pelajar dan maklumat peribadi', icon: UserRound, ready: true },
+  { id: 'profile', title: 'Student Registration & Profile', desc: 'Pendaftaran, profil, gambar dan status permohonan', icon: UserRound, ready: true },
   { id: 'emergency', title: 'Emergency Contact', desc: 'Maklumat waris dan penjaga', icon: Phone, ready: true },
   { id: 'attendance', title: 'Class Attendance', desc: 'Rekod kehadiran kelas', icon: CalendarCheck },
   { id: 'outing', title: 'Going Home / Outing Log', desc: 'Rekod keluar, destinasi dan pulang', icon: MapPin },
@@ -633,708 +634,242 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
   const [hostels, setHostels] = useState([]);
   const [students, setStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const [contacts, setContacts] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const [logs, setLogs] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [editForm, setEditForm] = useState(null);
+  const [editContacts, setEditContacts] = useState([emptyContact(), emptyContact()]);
+  const [rejectionReason, setRejectionReason] = useState('');
 
   useEffect(() => {
-    const stopHostels = onSnapshot(
-      query(collection(db, 'hostels'), where('status', '==', 'active')),
-      snapshot => {
-        const rows = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
-        setHostels(rows);
-        if (isSuper) setHostelIds(rows.map(hostel => hostel.id));
-      },
-      e => setError(friendlyError(e))
-    );
-
-    if (isSuper) {
-      setLoading(false);
-      return stopHostels;
-    }
-
+    const stopHostels = onSnapshot(query(collection(db, 'hostels'), where('status', '==', 'active')), snap => {
+      const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setHostels(rows);
+      if (isSuper) setHostelIds(rows.map(h => h.id));
+    }, e => setError(friendlyError(e)));
+    if (isSuper) { setLoading(false); return stopHostels; }
     const email = (profile.email || '').trim().toLowerCase();
-    if (!email) {
-      setError('Emel akaun tidak dapat dikenal pasti.');
+    const stopApproved = onSnapshot(doc(db, 'approvedUsers', email), snap => {
+      setHostelIds(snap.exists() && snap.data().status === 'active' ? (snap.data().hostelIds || []) : []);
       setLoading(false);
-      stopHostels();
-      return undefined;
-    }
-
-    const stopApproved = onSnapshot(
-      doc(db, 'approvedUsers', email),
-      snapshot => {
-        if (!snapshot.exists() || snapshot.data().status !== 'active') {
-          setError('Akses Admin tidak aktif. Sila hubungi Super Admin.');
-          setLoading(false);
-          return;
-        }
-        setHostelIds(Array.isArray(snapshot.data().hostelIds) ? snapshot.data().hostelIds : []);
-      },
-      e => {
-        setError(friendlyError(e));
-        setLoading(false);
-      }
-    );
-
-    return () => {
-      stopApproved();
-      stopHostels();
-    };
+    }, e => { setError(friendlyError(e)); setLoading(false); });
+    return () => { stopApproved(); stopHostels(); };
   }, [profile.email, isSuper]);
 
   useEffect(() => {
+    const q = isSuper ? collection(db, 'studentProfiles')
+      : hostelIds.length && hostelIds.length <= 30 ? query(collection(db, 'studentProfiles'), where('hostelId', 'in', hostelIds)) : null;
+    if (!q) { setStudents([]); setLoading(false); return undefined; }
     setLoading(true);
-    setError('');
-
-    const studentsQuery = isSuper
-      ? collection(db, 'studentProfiles')
-      : hostelIds.length > 0 && hostelIds.length <= 30
-        ? query(collection(db, 'studentProfiles'), where('hostelId', 'in', hostelIds))
-        : null;
-
-    if (!studentsQuery) {
-      setStudents([]);
-      setLoading(false);
-      if (!isSuper && hostelIds.length > 30) {
-        setError('Penempatan melebihi had carian sistem. Hubungi Super Admin.');
-      }
-      return undefined;
-    }
-
-    const stopStudents = onSnapshot(
-      studentsQuery,
-      snapshot => {
-        const rows = snapshot.docs.map(item => ({
-          uid: item.id,
-          ...item.data(),
-          approvalStatus: item.data().approvalStatus || 'pending',
-        }));
-        rows.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
-        setStudents(rows);
-        setLoading(false);
-      },
-      e => {
-        setError(friendlyError(e));
-        setLoading(false);
-      }
-    );
-
-    return stopStudents;
+    return onSnapshot(q, snap => {
+      const rows = snap.docs.map(d => ({ uid: d.id, ...d.data(), approvalStatus: d.data().approvalStatus || 'draft' }));
+      rows.sort((a,b) => (a.fullName || '').localeCompare(b.fullName || ''));
+      setStudents(rows); setLoading(false);
+    }, e => { setError(friendlyError(e)); setLoading(false); });
   }, [hostelIds, isSuper]);
 
   useEffect(() => {
-    let active = true;
-    async function loadContacts() {
-      if (!selectedStudent || initialTab !== 'emergency') {
-        setContacts(null);
-        return;
-      }
-      try {
-        const snap = await getDoc(doc(db, 'emergencyContacts', selectedStudent.uid));
-        if (active) setContacts(snap.exists() ? snap.data().contacts || [] : []);
-      } catch (e) {
-        if (active) setError(friendlyError(e));
-      }
-    }
-    loadContacts();
-    return () => { active = false; };
-  }, [selectedStudent, initialTab]);
+    if (!selectedStudent) { setContacts([]); setLogs([]); setEditForm(null); return undefined; }
+    const stopContacts = onSnapshot(doc(db, 'emergencyContacts', selectedStudent.uid), snap => {
+      const rows = snap.exists() ? (snap.data().contacts || []) : [];
+      setContacts(rows);
+      setEditContacts([0,1].map(i => ({ ...emptyContact(), ...(rows[i] || {}) })));
+    }, e => setError(friendlyError(e)));
+    const stopLogs = onSnapshot(query(collection(db, 'studentActivityLogs'), where('studentUid', '==', selectedStudent.uid)), snap => {
+      const rows = snap.docs.map(d => ({ id:d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds || 0)-(a.createdAt?.seconds || 0));
+      setLogs(rows);
+    }, e => setError(friendlyError(e)));
+    setEditForm({
+      fullName:selectedStudent.fullName || '', phone:selectedStudent.phone || '',
+      programme:selectedStudent.programme || '', hostelId:selectedStudent.hostelId || '',
+      hostelName:selectedStudent.hostelName || '', room:selectedStudent.room || '',
+    });
+    return () => { stopContacts(); stopLogs(); };
+  }, [selectedStudent]);
 
-  const filteredStudents = students.filter(student => {
-    const term = search.trim().toLowerCase();
-    const matchesSearch = !term ||
-      (student.fullName || '').toLowerCase().includes(term) ||
-      (student.email || '').toLowerCase().includes(term) ||
-      (student.phone || '').toLowerCase().includes(term) ||
-      (student.room || '').toLowerCase().includes(term);
-    const matchesStatus = statusFilter === 'all' || student.approvalStatus === statusFilter;
-    const matchesTab = initialTab !== 'emergency' || true;
-    return matchesSearch && matchesStatus && matchesTab;
+  const filtered = students.filter(st => {
+    const t=search.trim().toLowerCase();
+    const found=!t || [st.fullName,st.email,st.phone,st.room,st.programme].some(v => (v||'').toLowerCase().includes(t));
+    return found && (statusFilter==='all' || st.approvalStatus===statusFilter);
   });
 
-  const updateApproval = async (student, status) => {
-    if (!student?.uid) return;
-    if (status === 'rejected' && !window.confirm('Tolak pendaftaran pelajar ini?')) return;
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      await updateDoc(doc(db, 'studentProfiles', student.uid), {
-        approvalStatus: status,
-        approvedBy: user.uid,
-        approvedByEmail: profile.email,
-        approvedAt: serverTimestamp(),
-        rejectionReason: status === 'rejected' ? 'Tidak memenuhi pengesahan pihak hostel.' : '',
-        updatedAt: serverTimestamp(),
-      });
-      try {
-        await addDoc(collection(db, 'studentApprovalLogs'), {
-          action: status === 'approved' ? 'STUDENT_APPROVED' : 'STUDENT_REJECTED',
-          studentUid: student.uid,
-          studentEmail: student.email || '',
-          hostelId: student.hostelId,
-          performedBy: user.uid,
-          performedByEmail: profile.email,
-          createdAt: serverTimestamp(),
-        });
-      } catch (auditError) {
-        console.warn('Student approval saved but audit log failed:', auditError);
-      }
-      setMessage(status === 'approved'
-        ? 'Pendaftaran pelajar berjaya diluluskan.'
-        : 'Pendaftaran pelajar telah ditolak.');
-      setNotice('Status pendaftaran pelajar dikemas kini.');
-    } catch (e) {
-      setError(friendlyError(e));
-    } finally {
-      setBusy(false);
-    }
+  const addStudentLog = (batch, student, action, details = {}) => {
+    const logRef=doc(collection(db,'studentActivityLogs'));
+    batch.set(logRef,{studentUid:student.uid,studentEmail:student.email||'',hostelId:student.hostelId||'',action,details,performedBy:user.uid,performedByEmail:profile.email||'',createdAt:serverTimestamp()});
   };
 
-  const pending = students.filter(item => item.approvalStatus === 'pending').length;
-  const approved = students.filter(item => item.approvalStatus === 'approved').length;
-  const rejected = students.filter(item => item.approvalStatus === 'rejected').length;
+  const decide = async (student,status) => {
+    if (status==='rejected' && !rejectionReason.trim()) { setError('Sila masukkan sebab penolakan terlebih dahulu.'); return; }
+    if (!window.confirm(status==='approved'?'Luluskan permohonan pelajar ini?':'Tolak permohonan pelajar ini?')) return;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      const batch=writeBatch(db), ref=doc(db,'studentProfiles',student.uid);
+      batch.update(ref,{approvalStatus:status,approvedBy:user.uid,approvedByEmail:profile.email||'',approvedAt:serverTimestamp(),rejectionReason:status==='rejected'?rejectionReason.trim():'',updatedAt:serverTimestamp()});
+      addStudentLog(batch,student,status==='approved'?'APPROVED':'REJECTED',{reason:status==='rejected'?rejectionReason.trim():''});
+      await batch.commit();
+      setRejectionReason(''); setMessage(status==='approved'?'Permohonan berjaya diluluskan.':'Permohonan ditolak dengan sebab direkodkan.');
+      setNotice('Status permohonan pelajar dikemas kini.');
+      if(selectedStudent?.uid===student.uid) setSelectedStudent({...student,approvalStatus:status,rejectionReason:status==='rejected'?rejectionReason.trim():''});
+    } catch(e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
 
-  if (loading && students.length === 0) {
-    return <section className="card">Memuatkan rekod pelajar…</section>;
-  }
+  const saveAdminEdit = async () => {
+    if (!selectedStudent || !editForm) return;
+    if (!editForm.fullName.trim() || !editForm.hostelId) { setError('Nama dan hostel wajib diisi.'); return; }
+    const h=hostels.find(x=>x.id===editForm.hostelId);
+    if (!h && !isSuper) { setError('Hostel tidak sah.'); return; }
+    setBusy(true); setError('');
+    try {
+      const batch=writeBatch(db), ref=doc(db,'studentProfiles',selectedStudent.uid);
+      const next={...editForm,hostelName:h?.name||editForm.hostelName,fullName:editForm.fullName.trim(),phone:editForm.phone.trim(),programme:editForm.programme.trim(),room:editForm.room.trim(),updatedAt:serverTimestamp(),lastEditedBy:user.uid};
+      batch.update(ref,next);
+      addStudentLog(batch,{...selectedStudent,...next},'ADMIN_EDITED',{changedFields:Object.keys(editForm)});
+      await batch.commit();
+      setSelectedStudent({...selectedStudent,...next});
+      setMessage('Maklumat pelajar berjaya dikemas kini dan direkodkan dalam Audit Log.');
+    } catch(e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
 
-  return (
-    <div className="space-y-5">
-      <section className="grid gap-3 sm:grid-cols-3">
-        <div className="card">
-          <p className="muted">Jumlah rekod pelajar</p>
-          <p className="mt-2 text-3xl font-bold text-navy">{students.length}</p>
-        </div>
-        <div className="card">
-          <p className="muted">Menunggu pengesahan</p>
-          <p className="mt-2 text-3xl font-bold text-amber-600">{pending}</p>
-        </div>
-        <div className="card">
-          <p className="muted">Diluluskan</p>
-          <p className="mt-2 text-3xl font-bold text-emerald-700">{approved}</p>
-        </div>
-      </section>
+  const saveAdminContacts = async () => {
+    if (!selectedStudent) return;
+    for (let i=0;i<2;i++) if (!editContacts[i].fullName.trim()||!editContacts[i].phone.trim()||!editContacts[i].relationship.trim()||!editContacts[i].address.trim()) { setError('Lengkapkan kedua-dua Emergency Contact.'); return; }
+    setBusy(true); setError('');
+    try {
+      const batch=writeBatch(db);
+      batch.set(doc(db,'emergencyContacts',selectedStudent.uid),{uid:selectedStudent.uid,studentEmail:selectedStudent.email||'',contacts:editContacts,updatedAt:serverTimestamp(),updatedBy:user.uid});
+      addStudentLog(batch,selectedStudent,'ADMIN_EDITED_EMERGENCY_CONTACTS',{});
+      await batch.commit(); setMessage('Emergency Contact dikemas kini.');
+    } catch(e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
 
-      <section className="card">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="section-title">
-              {initialTab === 'emergency' ? 'Emergency Contact Pelajar' : 'Student Management'}
-            </h3>
-            <p className="muted mt-1">{isSuper ? 'Akses penuh: rekod pelajar daripada semua hostel.' : 'Rekod terhad kepada hostel yang ditugaskan kepada akaun anda.'}</p>
-          </div>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-            {isSuper ? hostels.length + ' hostel dalam sistem' : hostelIds.length + ' hostel ditugaskan'}
-          </span>
-        </div>
+  const removeStudent = async student => {
+    if (!isSuper || !window.confirm('Padam rekod profil pelajar ini? Audit Log tidak akan dipadam.')) return;
+    setBusy(true);
+    try {
+      const batch=writeBatch(db);
+      batch.delete(doc(db,'studentProfiles',student.uid));
+      const logRef=doc(collection(db,'studentActivityLogs'));
+      batch.set(logRef,{studentUid:student.uid,studentEmail:student.email||'',hostelId:student.hostelId||'',action:'PROFILE_DELETED',details:{},performedBy:user.uid,performedByEmail:profile.email||'',createdAt:serverTimestamp()});
+      await batch.commit();
+      await deleteDoc(doc(db,'emergencyContacts',student.uid)).catch(()=>{});
+      setSelectedStudent(null); setNotice('Profil pelajar dipadam. Audit Log dikekalkan.');
+    } catch(e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {hostels.filter(hostel => hostelIds.includes(hostel.id)).map(hostel => (
-            <span key={hostel.id} className="rounded-full bg-teal/10 px-3 py-1 text-xs font-medium text-teal">
-              {hostel.name}
-            </span>
-          ))}
-        </div>
+  const pending=students.filter(x=>x.approvalStatus==='pending').length;
+  const approved=students.filter(x=>x.approvalStatus==='approved').length;
+  const rejected=students.filter(x=>x.approvalStatus==='rejected').length;
 
-        {error && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        {message && <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <input
-            className="field"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Cari nama, emel, telefon atau bilik"
-          />
-          <select className="field" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="all">Semua status</option>
-            <option value="pending">Menunggu pengesahan</option>
-            <option value="approved">Diluluskan</option>
-            <option value="rejected">Ditolak</option>
-          </select>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {filteredStudents.length === 0 ? (
-            <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
-              Tiada rekod pelajar ditemui untuk carian atau penapis ini.
-            </p>
-          ) : filteredStudents.map(student => (
-            <div key={student.uid} className="rounded-xl border border-slate-200 p-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="font-semibold text-navy">{student.fullName || 'Nama belum diisi'}</p>
-                  <p className="text-xs text-slate-500">{student.email || 'Tiada emel'} · Bilik: {student.room || 'Belum ditetapkan'}</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {hostels.find(hostel => hostel.id === student.hostelId)?.name || student.hostelName || 'Hostel tidak dikenal pasti'}
-                    {' · '}{student.programme || 'Program belum diisi'}
-                  </p>
-                  <span className={
-                    student.approvalStatus === 'approved'
-                      ? 'mt-2 inline-block rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700'
-                      : student.approvalStatus === 'rejected'
-                        ? 'mt-2 inline-block rounded-full bg-red-50 px-2 py-1 text-xs text-red-700'
-                        : 'mt-2 inline-block rounded-full bg-amber-50 px-2 py-1 text-xs text-amber-700'
-                  }>
-                    {student.approvalStatus === 'approved' ? 'Diluluskan' : student.approvalStatus === 'rejected' ? 'Ditolak' : 'Menunggu'}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn-secondary" onClick={() => setSelectedStudent(student)}>
-                    {initialTab === 'emergency' ? 'Lihat Waris' : 'Butiran'}
-                  </button>
-                  {initialTab !== 'emergency' && student.approvalStatus !== 'approved' && (
-                    <button className="btn-primary" disabled={busy} onClick={() => updateApproval(student, 'approved')}>
-                      Luluskan
-                    </button>
-                  )}
-                  {initialTab !== 'emergency' && student.approvalStatus !== 'rejected' && (
-                    <button className="btn-danger" disabled={busy} onClick={() => updateApproval(student, 'rejected')}>
-                      Tolak
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {selectedStudent && (
-        <section className="card">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="section-title">Butiran: {selectedStudent.fullName || selectedStudent.email}</h3>
-            <button className="btn-secondary" onClick={() => setSelectedStudent(null)}>Tutup</button>
-          </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm">
-            <p><b>Emel:</b> {selectedStudent.email || '—'}</p>
-            <p><b>Telefon:</b> {selectedStudent.phone || '—'}</p>
-            <p><b>Program:</b> {selectedStudent.programme || '—'}</p>
-            <p><b>Hostel:</b> {selectedStudent.hostelName || '—'}</p>
-            <p><b>Bilik:</b> {selectedStudent.room || '—'}</p>
-            <p><b>Status:</b> {selectedStudent.approvalStatus}</p>
-          </div>
-
-          {initialTab === 'emergency' && (
-            <div className="mt-4 border-t pt-4">
-              <h4 className="font-semibold text-navy">Maklumat waris / penjaga</h4>
-              {contacts === null ? (
-                <p className="muted mt-2">Memuatkan maklumat waris…</p>
-              ) : contacts.length === 0 ? (
-                <p className="muted mt-2">Pelajar belum mendaftarkan Emergency Contact.</p>
-              ) : contacts.map((contact, index) => (
-                <div key={index} className="mt-3 rounded-xl bg-slate-50 p-3 text-sm">
-                  <p className="font-semibold">{contact.fullName}</p>
-                  <p>{contact.relationship} · {contact.phone}</p>
-                  <p className="text-slate-500">{contact.address}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      <section className="card">
-        <h4 className="font-semibold text-navy">Ringkasan status</h4>
-        <p className="muted mt-2">Ditolak: {rejected} · Menunggu: {pending} · Diluluskan: {approved}</p>
-      </section>
-    </div>
-  );
+  return <div className="space-y-5">
+    <section className="grid gap-3 sm:grid-cols-4">
+      {[['Jumlah pelajar',students.length],['Menunggu',pending],['Diluluskan',approved],['Ditolak',rejected]].map(([label,value])=><div className="card" key={label}><p className="muted">{label}</p><p className="mt-2 text-3xl font-bold text-navy">{loading?'…':value}</p></div>)}
+    </section>
+    <section className="card">
+      <div className="flex flex-wrap justify-between gap-2"><div><h3 className="section-title">{initialTab==='emergency'?'Emergency Contact Pelajar':'Student Management'}</h3><p className="muted mt-1">{isSuper?'Akses penuh semua hostel.':'Rekod terhad kepada hostel yang ditugaskan.'}</p></div><span className="text-xs text-slate-500">{hostelIds.length} hostel dalam skop</span></div>
+      {error&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}{message&&<p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2"><input className="field" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari nama, emel, telefon, program atau bilik"/><select className="field" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">Semua status</option><option value="draft">Draft</option><option value="pending">Pending Approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
+      <div className="mt-4 space-y-3">{filtered.map(st=><div key={st.uid} className="rounded-xl border p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3">{st.profilePhotoUrl?<img src={st.profilePhotoUrl} alt="Gambar pelajar" className="h-14 w-14 rounded-full object-cover"/>:<div className="h-14 w-14 rounded-full bg-slate-100 grid place-items-center"><UserRound/></div>}<div><b>{st.fullName||'Nama belum diisi'}</b><p className="text-xs text-slate-500">{st.email} · {st.hostelName||'—'} · Bilik {st.room||'—'}</p><span className="text-xs font-semibold">{st.approvalStatus}</span></div></div><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={()=>setSelectedStudent(st)}>Butiran & Edit</button>{st.approvalStatus!=='approved'&&<button className="btn-primary" disabled={busy} onClick={()=>decide(st,'approved')}>Approve</button>}{st.approvalStatus!=='rejected'&&<button className="btn-danger" disabled={busy} onClick={()=>decide(st,'rejected')}>Reject</button>}</div></div></div>)}</div>
+      {filtered.length===0&&<p className="muted mt-4">Tiada rekod pelajar ditemui.</p>}
+    </section>
+    {selectedStudent&&<section className="card space-y-4">
+      <div className="flex justify-between gap-2"><h3 className="section-title">Butiran Pelajar: {selectedStudent.fullName}</h3><button className="btn-secondary" onClick={()=>setSelectedStudent(null)}>Tutup</button></div>
+      {selectedStudent.profilePhotoUrl&&<img src={selectedStudent.profilePhotoUrl} alt="Gambar profil pelajar" className="h-28 w-28 rounded-xl object-cover"/>}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {['fullName','phone','programme','hostelId','room'].map(key=><label className="text-sm font-medium capitalize" key={key}>{key==='hostelId'?'Hostel':key}<input className="field mt-1" value={editForm?.[key]||''} onChange={e=>setEditForm(f=>({...f,[key]:e.target.value,...(key==='hostelId'?{hostelName:hostels.find(h=>h.id===e.target.value)?.name||''}:{})}))}/></label>)}
+      </div>
+      <div className="flex flex-wrap gap-2"><button className="btn-primary" disabled={busy} onClick={saveAdminEdit}>Simpan perubahan profil</button>{isSuper&&<button className="btn-danger" disabled={busy} onClick={()=>removeStudent(selectedStudent)}>Padam Profil (Super Admin)</button>}</div>
+      <div className="border-t pt-4"><h4 className="font-semibold">Emergency Contact (2 orang)</h4>{[0,1].map(i=><div key={i} className="mt-3 rounded-xl border p-3 space-y-2"><b>Contact {i+1}</b>{['fullName','phone','relationship','address'].map(k=><input key={k} className="field" placeholder={k} value={editContacts[i]?.[k]||''} onChange={e=>setEditContacts(old=>old.map((c,j)=>j===i?{...c,[k]:e.target.value}:c))}/>)}</div>)}<button className="btn-primary mt-3" disabled={busy} onClick={saveAdminContacts}>Simpan Emergency Contact</button></div>
+      <div className="border-t pt-4"><h4 className="font-semibold flex items-center gap-2"><History size={17}/> Student Activity History</h4>{logs.length===0?<p className="muted mt-2">Tiada sejarah aktiviti.</p>:logs.map(log=><div key={log.id} className="border-b py-2 text-sm"><b>{log.action}</b><p className="text-xs text-slate-500">{log.performedByEmail} · {log.createdAt?.toDate?.().toLocaleString('ms-MY')||'Masa tidak tersedia'}</p><pre className="whitespace-pre-wrap text-xs">{JSON.stringify(log.details||{})}</pre></div>)}</div>
+      <div className="border-t pt-4"><label className="text-sm font-semibold">Sebab penolakan (wajib untuk Reject)</label><textarea className="field mt-1" rows="3" value={rejectionReason} onChange={e=>setRejectionReason(e.target.value)} placeholder="Nyatakan sebab permohonan ditolak"/><div className="mt-2 flex gap-2"><button className="btn-primary" disabled={busy} onClick={()=>decide(selectedStudent,'approved')}>Approve</button><button className="btn-danger" disabled={busy} onClick={()=>decide(selectedStudent,'rejected')}>Reject</button></div></div>
+    </section>}
+  </div>;
 }
 
 function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
-  const [form, setForm] = useState({
-    fullName: profile.displayName || '',
-    phone: '',
-    programme: '',
-    hostelId: '',
-    hostelName: '',
-    room: '',
-  })
+  const [form,setForm]=useState({fullName:profile.displayName||'',phone:'',programme:'',hostelId:'',hostelName:'',room:''});
+  const [contacts,setContacts]=useState([emptyContact(),emptyContact()]);
+  const [hostels,setHostels]=useState([]);
+  const [logs,setLogs]=useState([]);
+  const [photoFile,setPhotoFile]=useState(null);
+  const [photoUrl,setPhotoUrl]=useState('');
+  const [status,setStatus]=useState('draft');
+  const [rejectionReason,setRejectionReason]=useState('');
+  const [loading,setLoading]=useState(true);
+  const [hostelLoading,setHostelLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  const locked=status==='pending';
 
-  const [contacts, setContacts] = useState([emptyContact(), emptyContact()])
-  const [hostels, setHostels] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [hostelLoading, setHostelLoading] = useState(true)
-  const [savingProfile, setSavingProfile] = useState(false)
-  const [savingContacts, setSavingContacts] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let active = true
-
-    async function loadStudentData() {
-      try {
-        const [profileSnap, contactSnap] = await Promise.all([
-          getDoc(doc(db, 'studentProfiles', user.uid)),
-          getDoc(doc(db, 'emergencyContacts', user.uid)),
-        ])
-
-        if (!active) return
-
-        if (profileSnap.exists()) {
-          setForm(current => ({
-            ...current,
-            ...profileSnap.data(),
-            hostelId: profileSnap.data().hostelId || '',
-            hostelName: profileSnap.data().hostelName || '',
-          }))
-        }
-
-        if (contactSnap.exists() && Array.isArray(contactSnap.data().contacts)) {
-          setContacts(
-            [0, 1].map(i => ({
-              ...emptyContact(),
-              ...(contactSnap.data().contacts[i] || {}),
-            }))
-          )
-        }
-      } catch (e) {
-        if (active) setError(friendlyError(e))
-      } finally {
-        if (active) setLoading(false)
+  useEffect(()=>{
+    let active=true;
+    Promise.all([getDoc(doc(db,'studentProfiles',user.uid)),getDoc(doc(db,'emergencyContacts',user.uid))]).then(([p,c])=>{
+      if(!active)return;
+      if(p.exists()){
+        const d=p.data(); setForm(f=>({...f,...d,hostelId:d.hostelId||'',hostelName:d.hostelName||''}));
+        setStatus(d.approvalStatus||'draft'); setPhotoUrl(d.profilePhotoUrl||''); setRejectionReason(d.rejectionReason||'');
       }
-    }
+      if(c.exists()) setContacts([0,1].map(i=>({...emptyContact(),...(c.data().contacts?.[i]||{})})));
+    }).catch(e=>setError(friendlyError(e))).finally(()=>active&&setLoading(false));
+    return ()=>{active=false;};
+  },[user.uid]);
 
-    loadStudentData()
+  useEffect(()=>onSnapshot(query(collection(db,'hostels'),where('status','==','active')),snap=>{setHostels(snap.docs.map(d=>({id:d.id,...d.data()})));setHostelLoading(false);},e=>{setError(friendlyError(e));setHostelLoading(false);}),[]);
+  useEffect(()=>onSnapshot(query(collection(db,'studentActivityLogs'),where('studentUid','==',user.uid)),snap=>setLogs(snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),e=>setError(friendlyError(e))),[user.uid]);
 
-    return () => {
-      active = false
-    }
-  }, [user.uid])
-
-  useEffect(() => {
-    const activeHostelsQuery = query(
-      collection(db, 'hostels'),
-      where('status', '==', 'active')
-    )
-
-    const unsubscribe = onSnapshot(
-      activeHostelsQuery,
-      snapshot => {
-        setHostels(
-          snapshot.docs.map(item => ({
-            id: item.id,
-            ...item.data(),
-          }))
-        )
-        setHostelLoading(false)
-      },
-      e => {
-        setError(friendlyError(e))
-        setHostelLoading(false)
+  const changeContact=(i,k,v)=>setContacts(old=>old.map((c,j)=>j===i?{...c,[k]:v}:c));
+  const changeHostel=id=>{const h=hostels.find(x=>x.id===id);setForm(f=>({...f,hostelId:id,hostelName:h?.name||''}));};
+  const validate=()=>{
+    if(!form.fullName.trim()||!form.phone.trim()||!form.programme.trim()||!form.hostelId||!form.room.trim())return 'Lengkapkan nama, telefon, program, hostel dan nombor bilik.';
+    if(!hostels.some(h=>h.id===form.hostelId))return 'Hostel tidak aktif atau tidak sah.';
+    for(let i=0;i<2;i++){const c=contacts[i];if(!c.fullName.trim()||!c.phone.trim()||!c.relationship.trim()||!c.address.trim())return 'Lengkapkan semua maklumat kedua-dua Emergency Contact.';}
+    return '';
+  };
+  const saveApplication=async(submit)=>{
+    setError('');
+    if(locked){setError('Permohonan sedang menunggu pengesahan dan tidak boleh diedit.');return;}
+    if(submit){const problem=validate();if(problem){setError(problem);return;}}
+    setBusy(true);
+    try{
+      const selected=hostels.find(h=>h.id===form.hostelId);
+      let nextPhotoUrl=photoUrl, photoPath='';
+      if(photoFile){
+        if(photoFile.size>10*1024*1024)throw new Error('Saiz gambar melebihi had maksimum 10 MB.');
+        if(!['image/jpeg','image/png','image/webp'].includes(photoFile.type))throw new Error('Format gambar mesti JPG, PNG atau WebP.');
+        photoPath=`student-profile-photos/${user.uid}/profile-${Date.now()}`;
+        const fileRef=storageRef(storage,photoPath);
+        await uploadBytes(fileRef,photoFile,{contentType:photoFile.type});
+        nextPhotoUrl=await getDownloadURL(fileRef);
       }
-    )
-
-    return unsubscribe
-  }, [])
-
-  const changeContact = (index, key, value) => {
-    setContacts(old =>
-      old.map((contact, i) =>
-        i === index ? { ...contact, [key]: value } : contact
-      )
-    )
-  }
-
-  const changeHostel = (hostelId) => {
-    const selected = hostels.find(hostel => hostel.id === hostelId)
-
-    setForm(current => ({
-      ...current,
-      hostelId,
-      hostelName: selected?.name || '',
-      room: '',
-    }))
-  }
-
-  const saveProfile = async (e) => {
-    e.preventDefault()
-    setError('')
-
-    if (!form.fullName.trim()) {
-      return setError('Nama penuh wajib diisi.')
-    }
-
-    if (!form.hostelId) {
-      return setError('Sila pilih hostel.')
-    }
-
-    const selectedHostel = hostels.find(h => h.id === form.hostelId)
-
-    if (!selectedHostel) {
-      return setError('Hostel yang dipilih tidak lagi aktif. Sila pilih hostel lain.')
-    }
-
-    setSavingProfile(true)
-
-    try {
-      await setDoc(
-        doc(db, 'studentProfiles', user.uid),
-        {
-          uid: user.uid,
-          email: profile.email,
-          fullName: form.fullName.trim(),
-          phone: form.phone.trim(),
-          programme: form.programme.trim(),
-          hostelId: selectedHostel.id,
-          hostelName: selectedHostel.name,
-          room: form.room.trim(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      )
-
-      setNotice('Profil pelajar berjaya disimpan.')
-    } catch (e) {
-      setError(friendlyError(e))
-    } finally {
-      setSavingProfile(false)
-    }
-  }
-
-  const saveContacts = async (e) => {
-    e.preventDefault()
-    setError('')
-
-    for (let i = 0; i < contacts.length; i++) {
-      const contact = contacts[i]
-
-      if (
-        !contact.fullName.trim() ||
-        !contact.phone.trim() ||
-        !contact.relationship.trim() ||
-        !contact.address.trim()
-      ) {
-        return setError(`Sila lengkapkan semua maklumat Emergency Contact ${i + 1}.`)
-      }
-    }
-
-    setSavingContacts(true)
-
-    try {
-      await setDoc(doc(db, 'emergencyContacts', user.uid), {
-        uid: user.uid,
-        studentEmail: profile.email,
-        contacts: contacts.map(contact => ({
-          fullName: contact.fullName.trim(),
-          phone: contact.phone.trim(),
-          relationship: contact.relationship.trim(),
-          address: contact.address.trim(),
-        })),
-        updatedAt: serverTimestamp(),
-      })
-
-      setNotice('Dua Emergency Contact berjaya disimpan.')
-    } catch (e) {
-      setError(friendlyError(e))
-    } finally {
-      setSavingContacts(false)
-    }
-  }
-
-  if (loading) {
-    return <section className="card">Memuatkan profil pelajar…</section>
-  }
-
-  return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      {(initialTab === 'all' || initialTab === 'profile') && (
-        <section className="card">
-          <div className="mb-4 flex items-center gap-2">
-            <UserRound className="text-teal" />
-            <h3 className="section-title">Profil Pelajar</h3>
-          </div>
-
-          <p className="muted mb-4">
-            Lengkapkan maklumat peribadi dan pilih hostel penempatan.
-          </p>
-
-          {error && (
-            <p className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-              {error}
-            </p>
-          )}
-
-          <form onSubmit={saveProfile} className="space-y-3">
-            <label className="block text-sm font-medium">
-              Nama penuh
-              <input
-                className="field mt-1"
-                value={form.fullName}
-                onChange={e => setForm({ ...form, fullName: e.target.value })}
-                required
-                maxLength={100}
-              />
-            </label>
-
-            <label className="block text-sm font-medium">
-              Emel Google
-              <input className="field mt-1 bg-slate-100" value={profile.email} readOnly />
-            </label>
-
-            <label className="block text-sm font-medium">
-              Nombor telefon
-              <input
-                className="field mt-1"
-                value={form.phone}
-                onChange={e => setForm({ ...form, phone: e.target.value })}
-                maxLength={25}
-                placeholder="Contoh: 01X-XXXXXXX"
-              />
-            </label>
-
-            <label className="block text-sm font-medium">
-              Program / Kursus
-              <input
-                className="field mt-1"
-                value={form.programme}
-                onChange={e => setForm({ ...form, programme: e.target.value })}
-                maxLength={120}
-              />
-            </label>
-
-            <label className="block text-sm font-medium">
-              Pilih Hostel
-              <select
-                className="field mt-1"
-                value={form.hostelId}
-                onChange={e => changeHostel(e.target.value)}
-                required
-                disabled={hostelLoading || hostels.length === 0}
-              >
-                <option value="">
-                  {hostelLoading ? 'Memuatkan senarai hostel…' : 'Pilih hostel'}
-                </option>
-                {hostels.map(hostel => (
-                  <option key={hostel.id} value={hostel.id}>
-                    {hostel.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {!hostelLoading && hostels.length === 0 && (
-              <p className="text-xs text-amber-700">
-                Tiada hostel aktif ditemui. Sila hubungi pihak pengurusan.
-              </p>
-            )}
-
-            <label className="block text-sm font-medium">
-              Bilik
-              <input
-                className="field mt-1"
-                value={form.room}
-                onChange={e => setForm({ ...form, room: e.target.value })}
-                maxLength={30}
-                placeholder="Diisi mengikut penempatan rasmi"
-              />
-              <span className="mt-1 block text-xs text-slate-500">
-                Pemilihan bilik daripada senarai rasmi akan disambungkan dalam langkah pembangunan seterusnya.
-              </span>
-            </label>
-
-            <button
-              className="btn-primary w-full"
-              disabled={savingProfile || hostelLoading || hostels.length === 0}
-            >
-              <Save size={16} />
-              {savingProfile ? 'Menyimpan…' : 'Simpan Profil'}
-            </button>
-          </form>
-        </section>
-      )}
-
-      {(initialTab === 'all' || initialTab === 'emergency') && (
-        <section className="card">
-          <div className="mb-2 flex items-center gap-2">
-            <Phone className="text-teal" />
-            <h3 className="section-title">Emergency Contact</h3>
-          </div>
-
-          <p className="muted mb-4">
-            Dua orang waris / penjaga wajib didaftarkan.
-          </p>
-
-          {error && (
-            <p className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-              {error}
-            </p>
-          )}
-
-          <form onSubmit={saveContacts} className="space-y-5">
-            {contacts.map((contact, index) => (
-              <div key={index} className="rounded-xl border border-slate-200 p-4">
-                <h4 className="mb-3 font-bold text-navy">
-                  {index === 0 ? 'Emergency Contact 1 (Utama)' : 'Emergency Contact 2'}
-                </h4>
-
-                <div className="space-y-3">
-                  <label className="block text-sm font-medium">
-                    Nama penuh
-                    <input
-                      className="field mt-1"
-                      value={contact.fullName}
-                      onChange={e => changeContact(index, 'fullName', e.target.value)}
-                      required
-                      maxLength={100}
-                    />
-                  </label>
-
-                  <label className="block text-sm font-medium">
-                    Nombor telefon
-                    <input
-                      className="field mt-1"
-                      value={contact.phone}
-                      onChange={e => changeContact(index, 'phone', e.target.value)}
-                      required
-                      maxLength={25}
-                      placeholder="Contoh: 60123456789"
-                    />
-                  </label>
-
-                  <label className="block text-sm font-medium">
-                    Hubungan
-                    <input
-                      className="field mt-1"
-                      value={contact.relationship}
-                      onChange={e => changeContact(index, 'relationship', e.target.value)}
-                      required
-                      maxLength={50}
-                      placeholder="Contoh: Ibu / Bapa / Penjaga"
-                    />
-                  </label>
-
-                  <label className="block text-sm font-medium">
-                    Alamat rumah
-                    <textarea
-                      className="field mt-1"
-                      rows="2"
-                      value={contact.address}
-                      onChange={e => changeContact(index, 'address', e.target.value)}
-                      required
-                      maxLength={300}
-                    />
-                  </label>
-                </div>
-              </div>
-            ))}
-
-            <button className="btn-primary w-full" disabled={savingContacts}>
-              <Save size={16} />
-              {savingContacts ? 'Menyimpan…' : 'Simpan 2 Emergency Contacts'}
-            </button>
-          </form>
-        </section>
-      )}
-    </div>
-  )
+      const batch=writeBatch(db), profileRef=doc(db,'studentProfiles',user.uid), contactRef=doc(db,'emergencyContacts',user.uid);
+      const nextStatus=submit?'pending':status;
+      const payload={uid:user.uid,email:profile.email,fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),profilePhotoUrl:nextPhotoUrl,profilePhotoPath:photoPath||undefined,approvalStatus:nextStatus,rejectionReason:submit?'':rejectionReason,updatedAt:serverTimestamp(),...(submit?{submittedAt:serverTimestamp(),submissionVersion:(Number(form.submissionVersion)||0)+1}:{})};
+      batch.set(profileRef,payload,{merge:true});
+      batch.set(contactRef,{uid:user.uid,studentEmail:profile.email,contacts:contacts.map(c=>({fullName:c.fullName.trim(),phone:c.phone.trim(),relationship:c.relationship.trim(),address:c.address.trim()})),updatedAt:serverTimestamp()},{merge:true});
+      const logRef=doc(collection(db,'studentActivityLogs'));
+      batch.set(logRef,{studentUid:user.uid,studentEmail:profile.email,hostelId:form.hostelId,action:submit?(status==='approved'?'RESUBMITTED':status==='rejected'?'RESUBMITTED':'SUBMITTED'):'DRAFT_SAVED',details:{statusBefore:status,statusAfter:nextStatus,profileFields:['fullName','phone','programme','hostelId','room'],photoChanged:!!photoFile},performedBy:user.uid,performedByEmail:profile.email,createdAt:serverTimestamp()});
+      await batch.commit();
+      setStatus(nextStatus);setPhotoUrl(nextPhotoUrl);setPhotoFile(null);setRejectionReason('');
+      setNotice(submit?'Permohonan berjaya dihantar. Status: Pending Approval.':'Draf pendaftaran berjaya disimpan.');
+    }catch(e){setError(friendlyError(e));}finally{setBusy(false);}
+  };
+  if(loading)return <section className="card">Memuatkan pendaftaran pelajar…</section>;
+  return <div className="space-y-5">
+    <section className="card"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="section-title">Student Registration</h3><p className="muted mt-1">Lengkapkan profil, gambar dan dua Emergency Contact.</p></div><span className={status==='approved'?'rounded-full bg-emerald-50 px-3 py-1 text-sm text-emerald-700':status==='rejected'?'rounded-full bg-red-50 px-3 py-1 text-sm text-red-700':'rounded-full bg-amber-50 px-3 py-1 text-sm text-amber-700'}>{status==='approved'?'Approved':status==='rejected'?'Rejected':status==='pending'?'Pending Approval':'Draft'}</span></div>
+    {rejectionReason&&status==='rejected'&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700"><b>Sebab penolakan:</b> {rejectionReason}</p>}
+    {locked&&<p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Permohonan telah dihantar dan dikunci sementara menunggu semakan Admin/Warden.</p>}
+    {error&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+    <div className="mt-4 flex flex-wrap items-center gap-4"><div className="h-24 w-24 overflow-hidden rounded-full bg-slate-100 grid place-items-center">{photoFile?<img src={URL.createObjectURL(photoFile)} alt="Preview gambar" className="h-full w-full object-cover"/>:photoUrl?<img src={photoUrl} alt="Gambar profil" className="h-full w-full object-cover"/>:<ImageIcon size={32} className="text-slate-400"/>}</div><div><label className="btn-secondary inline-flex cursor-pointer items-center gap-2"><Upload size={16}/> Muat naik gambar<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={locked} onChange={e=>{const f=e.target.files?.[0];if(!f)return;if(f.size>10*1024*1024){setError('Saiz gambar maksimum ialah 10 MB.');e.target.value='';return;}setPhotoFile(f);setError('');}}/></label><p className="mt-1 text-xs text-slate-500">JPG, PNG atau WebP · Maksimum 10 MB.</p></div></div>
+    <fieldset disabled={locked||busy} className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Nama penuh<input className="field mt-1" value={form.fullName} onChange={e=>setForm(f=>({...f,fullName:e.target.value}))} maxLength={100}/></label><label className="text-sm font-medium">Emel Google<input className="field mt-1 bg-slate-100" value={profile.email} readOnly/></label><label className="text-sm font-medium">Nombor telefon<input className="field mt-1" value={form.phone} onChange={e=>setForm(f=>({...f,phone:e.target.value}))} maxLength={25}/></label><label className="text-sm font-medium">Program / Kursus<input className="field mt-1" value={form.programme} onChange={e=>setForm(f=>({...f,programme:e.target.value}))} maxLength={120}/></label><label className="text-sm font-medium">Hostel<select className="field mt-1" value={form.hostelId} onChange={e=>changeHostel(e.target.value)} disabled={hostelLoading}><option value="">Pilih hostel</option>{hostels.map(h=><option key={h.id} value={h.id}>{h.name}</option>)}</select></label><label className="text-sm font-medium">Nombor bilik<input className="field mt-1" value={form.room} onChange={e=>setForm(f=>({...f,room:e.target.value}))} maxLength={30} placeholder="Contoh: A-203"/></label></fieldset>
+    <section className="mt-5 border-t pt-4"><h4 className="font-semibold">Emergency Contact</h4><p className="muted mt-1">Dua orang waris / penjaga wajib diisi.</p>{contacts.map((c,i)=><div key={i} className="mt-3 rounded-xl border p-3 space-y-2"><b>Emergency Contact {i+1}</b><fieldset disabled={locked||busy} className="grid gap-2 sm:grid-cols-2"><input className="field" placeholder="Nama penuh" value={c.fullName} onChange={e=>changeContact(i,'fullName',e.target.value)}/><input className="field" placeholder="Nombor telefon" value={c.phone} onChange={e=>changeContact(i,'phone',e.target.value)}/><input className="field" placeholder="Hubungan" value={c.relationship} onChange={e=>changeContact(i,'relationship',e.target.value)}/><textarea className="field sm:col-span-2" rows="2" placeholder="Alamat" value={c.address} onChange={e=>changeContact(i,'address',e.target.value)}/></fieldset></div>)}</section>
+    {!locked&&<div className="mt-5 flex flex-wrap gap-2"><button className="btn-secondary" disabled={busy||hostelLoading} onClick={()=>saveApplication(false)}>Simpan Draf</button><button className="btn-primary" disabled={busy||hostelLoading} onClick={()=>saveApplication(true)}>{busy?'Memproses…':status==='approved'||status==='rejected'?'Resubmit Permohonan':'Submit Application'}</button></div>}
+    </section>
+    <section className="card"><h3 className="section-title flex items-center gap-2"><History size={18}/> Student Activity History</h3>{logs.length===0?<p className="muted mt-3">Tiada aktiviti direkodkan.</p>:logs.map(log=><div key={log.id} className="border-b py-3 text-sm"><b>{log.action}</b><p className="text-xs text-slate-500">{log.createdAt?.toDate?.().toLocaleString('ms-MY')||'Masa tidak tersedia'}</p><pre className="whitespace-pre-wrap text-xs">{JSON.stringify(log.details||{})}</pre></div>)}</section>
+  </div>;
 }
 
 function AdminOverview() {
