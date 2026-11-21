@@ -1328,7 +1328,10 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
   const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
 
   useEffect(() => {
-    return onSnapshot(collection(db, 'hostelRules'), snapshot => {
+    const rulesQuery = profile.role === 'student'
+      ? query(collection(db, 'hostelRules'), where('status', '==', 'active'))
+      : collection(db, 'hostelRules');
+    return onSnapshot(rulesQuery, snapshot => {
       const rows = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
       rows.sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
       setRules(rows);
