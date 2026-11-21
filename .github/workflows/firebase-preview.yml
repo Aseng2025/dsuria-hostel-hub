@@ -1,0 +1,42 @@
+name: Deploy Development Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - development/module-16-admin-management
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: firebase-preview-development
+  cancel-in-progress: true
+
+jobs:
+  build_and_preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build for Firebase Hosting
+        run: npm run build:hosting
+
+      - name: Deploy stable development preview
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DSURIA_HOSTEL_HUB }}
+          projectId: dsuria-hostel-hub
+          channelId: development
+          expires: 30d
