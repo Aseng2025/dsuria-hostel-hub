@@ -387,6 +387,78 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
+    // Hostel Rules: global rules shared by every hostel.
+    match /hostelRules/{ruleId} {
+      allow read: if isActiveUser();
+      allow create: if isSuperAdmin()
+        && request.resource.data.keys().hasOnly([
+          'title','category','content','effectiveDate','status','version',
+          'createdAt','createdBy','createdByEmail','updatedAt','updatedBy','updatedByEmail'
+        ])
+        && request.resource.data.title is string && request.resource.data.title.size() > 0
+        && request.resource.data.category in [
+          'General Hostel Rules','Cleanliness & Safety','Student Discipline',
+          'Facilities Usage','Outgoing/Incoming Hours','Prohibitions & Disciplinary Actions'
+        ]
+        && request.resource.data.content is string && request.resource.data.content.size() > 0
+        && request.resource.data.effectiveDate is string
+        && request.resource.data.status == 'active'
+        && request.resource.data.version == 1
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow update: if isSuperAdmin()
+        && request.resource.data.keys().hasOnly([
+          'title','category','content','effectiveDate','status','version',
+          'createdAt','createdBy','createdByEmail','updatedAt','updatedBy','updatedByEmail'
+        ])
+        && request.resource.data.title is string && request.resource.data.title.size() > 0
+        && request.resource.data.category in [
+          'General Hostel Rules','Cleanliness & Safety','Student Discipline',
+          'Facilities Usage','Outgoing/Incoming Hours','Prohibitions & Disciplinary Actions'
+        ]
+        && request.resource.data.content is string && request.resource.data.content.size() > 0
+        && request.resource.data.effectiveDate is string
+        && request.resource.data.status in ['active','archived']
+        && request.resource.data.version is int
+        && request.resource.data.version >= resource.data.version
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if isSuperAdmin();
+    }
+
+    // Student acknowledgements are immutable and tied to the current rule version.
+    match /hostelRuleAcknowledgements/{ackId} {
+      allow read: if isSuperAdmin()
+        || (signedIn() && resource.data.studentUid == request.auth.uid)
+        || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds);
+      allow create: if isStudent()
+        && request.resource.data.keys().hasOnly([
+          'ruleId','ruleTitle','version','studentUid','studentEmail','studentName','hostelId','acknowledgedAt'
+        ])
+        && request.resource.data.studentUid == request.auth.uid
+        && request.resource.data.studentEmail == request.auth.token.email
+        && request.resource.data.version is int
+        && request.resource.data.hostelId is string
+        && exists(/databases/$(database)/documents/hostelRules/$(request.resource.data.ruleId))
+        && get(/databases/$(database)/documents/hostelRules/$(request.resource.data.ruleId)).data.status == 'active'
+        && get(/databases/$(database)/documents/hostelRules/$(request.resource.data.ruleId)).data.version == request.resource.data.version
+        && request.resource.data.acknowledgedAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // Immutable audit trail for global Hostel Rules changes.
+    match /hostelRuleAuditLogs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isSuperAdmin()
+        && request.resource.data.keys().hasOnly([
+          'ruleId','ruleTitle','action','version','performedBy','performedByEmail','createdAt'
+        ])
+        && request.resource.data.performedBy == request.auth.uid
+        && request.resource.data.performedByEmail == request.auth.token.email;
+      allow update, delete: if false;
+    }
+
     // Immutable student activity logs
     match /studentActivityLogs/{logId} {
       allow read: if signedIn() && (
