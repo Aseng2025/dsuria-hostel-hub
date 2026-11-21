@@ -737,7 +737,7 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
       const batch=writeBatch(db), ref=doc(db,'studentProfiles',selectedStudent.uid);
       const next={...editForm,hostelName:h?.name||editForm.hostelName,fullName:editForm.fullName.trim(),phone:editForm.phone.trim(),programme:editForm.programme.trim(),room:editForm.room.trim(),updatedAt:serverTimestamp(),lastEditedBy:user.uid};
       batch.update(ref,next);
-      addStudentLog(batch,{...selectedStudent,...next},'ADMIN_EDITED',{changedFields:Object.keys(editForm)});
+      addStudentLog(batch,{...selectedStudent,...next},'ADMIN_EDITED',{before:{fullName:selectedStudent.fullName||'',phone:selectedStudent.phone||'',programme:selectedStudent.programme||'',hostelId:selectedStudent.hostelId||'',hostelName:selectedStudent.hostelName||'',room:selectedStudent.room||''},after:{fullName:next.fullName,phone:next.phone,programme:next.programme,hostelId:next.hostelId,hostelName:next.hostelName,room:next.room}});
       await batch.commit();
       setSelectedStudent({...selectedStudent,...next});
       setMessage('Maklumat pelajar berjaya dikemas kini dan direkodkan dalam Audit Log.');
@@ -751,7 +751,7 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
     try {
       const batch=writeBatch(db);
       batch.set(doc(db,'emergencyContacts',selectedStudent.uid),{uid:selectedStudent.uid,studentEmail:selectedStudent.email||'',contacts:editContacts,updatedAt:serverTimestamp(),updatedBy:user.uid});
-      addStudentLog(batch,selectedStudent,'ADMIN_EDITED_EMERGENCY_CONTACTS',{});
+      addStudentLog(batch,selectedStudent,'ADMIN_EDITED_EMERGENCY_CONTACTS',{before:contacts,after:editContacts});
       await batch.commit(); setMessage('Emergency Contact dikemas kini.');
     } catch(e) { setError(friendlyError(e)); } finally { setBusy(false); }
   };
@@ -803,6 +803,8 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
 function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
   const [form,setForm]=useState({fullName:profile.displayName||'',phone:'',programme:'',hostelId:'',hostelName:'',room:''});
   const [contacts,setContacts]=useState([emptyContact(),emptyContact()]);
+  const [originalData,setOriginalData]=useState({});
+  const [originalContacts,setOriginalContacts]=useState([emptyContact(),emptyContact()]);
   const [hostels,setHostels]=useState([]);
   const [logs,setLogs]=useState([]);
   const [photoFile,setPhotoFile]=useState(null);
@@ -823,7 +825,7 @@ function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
         const d=p.data(); setForm(f=>({...f,...d,hostelId:d.hostelId||'',hostelName:d.hostelName||''}));
         setStatus(d.approvalStatus||'draft'); setPhotoUrl(d.profilePhotoUrl||''); setRejectionReason(d.rejectionReason||'');
       }
-      if(c.exists()) setContacts([0,1].map(i=>({...emptyContact(),...(c.data().contacts?.[i]||{})})));
+      if(c.exists()){const loaded=[0,1].map(i=>({...emptyContact(),...(c.data().contacts?.[i]||{})}));setContacts(loaded);setOriginalContacts(loaded);}
     }).catch(e=>setError(friendlyError(e))).finally(()=>active&&setLoading(false));
     return ()=>{active=false;};
   },[user.uid]);
@@ -862,9 +864,9 @@ function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
       batch.set(profileRef,payload,{merge:true});
       batch.set(contactRef,{uid:user.uid,studentEmail:profile.email,contacts:contacts.map(c=>({fullName:c.fullName.trim(),phone:c.phone.trim(),relationship:c.relationship.trim(),address:c.address.trim()})),updatedAt:serverTimestamp()},{merge:true});
       const logRef=doc(collection(db,'studentActivityLogs'));
-      batch.set(logRef,{studentUid:user.uid,studentEmail:profile.email,hostelId:form.hostelId,action:submit?(status==='approved'?'RESUBMITTED':status==='rejected'?'RESUBMITTED':'SUBMITTED'):'DRAFT_SAVED',details:{statusBefore:status,statusAfter:nextStatus,profileFields:['fullName','phone','programme','hostelId','room'],photoChanged:!!photoFile},performedBy:user.uid,performedByEmail:profile.email,createdAt:serverTimestamp()});
+      batch.set(logRef,{studentUid:user.uid,studentEmail:profile.email,hostelId:form.hostelId,action:submit?(status==='approved'?'RESUBMITTED':status==='rejected'?'RESUBMITTED':'SUBMITTED'):'DRAFT_SAVED',details:{statusBefore:status,statusAfter:nextStatus,before:{...originalData,emergencyContacts:originalContacts},after:{fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),profilePhotoUrl:nextPhotoUrl,emergencyContacts:contacts}},performedBy:user.uid,performedByEmail:profile.email,createdAt:serverTimestamp()});
       await batch.commit();
-      setStatus(nextStatus);setPhotoUrl(nextPhotoUrl);setPhotoFile(null);setRejectionReason('');
+      setStatus(nextStatus);setPhotoUrl(nextPhotoUrl);setPhotoFile(null);setRejectionReason('');setOriginalData({fullName:form.fullName.trim(),phone:form.phone.trim(),programme:form.programme.trim(),hostelId:form.hostelId,hostelName:selected?.name||form.hostelName||'',room:form.room.trim(),profilePhotoUrl:nextPhotoUrl});setOriginalContacts(contacts);
       setNotice(submit?'Permohonan berjaya dihantar. Status: Pending Approval.':'Draf pendaftaran berjaya disimpan.');
     }catch(e){setError(friendlyError(e));}finally{setBusy(false);}
   };
