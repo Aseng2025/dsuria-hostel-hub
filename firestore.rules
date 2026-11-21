@@ -84,6 +84,12 @@ service cloud.firestore {
         );
     }
 
+    function hasApprovedMovementStatus(studentUid, statusDate, movementStatus) {
+      return exists(/databases/$(database)/documents/dailyMovementApprovals/$(studentUid + '_' + statusDate))
+        && get(/databases/$(database)/documents/dailyMovementApprovals/$(studentUid + '_' + statusDate)).data.approvalStatus == 'approved'
+        && get(/databases/$(database)/documents/dailyMovementApprovals/$(studentUid + '_' + statusDate)).data.type == movementStatus;
+    }
+
     // Approved account access
     function validApprovedUser() {
       return request.resource.data.keys().hasOnly([
@@ -555,6 +561,10 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.approvalStatus == 'approved'
         && request.resource.data.date is string
         && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED']
+        && (
+          request.resource.data.status in ['AT HOSTEL','NOT VERIFIED']
+          || hasApprovedMovementStatus(request.auth.uid, request.resource.data.date, request.resource.data.status)
+        )
         && request.resource.data.locationVerified is bool
         && request.resource.data.latitude is number
         && request.resource.data.longitude is number
@@ -574,6 +584,10 @@ service cloud.firestore {
         && request.resource.data.hostelId == resource.data.hostelId
         && request.resource.data.date == resource.data.date
         && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
+        && (
+          request.resource.data.status == 'AT HOSTEL'
+          || hasApprovedMovementStatus(request.auth.uid, request.resource.data.date, request.resource.data.status)
+        )
         && request.resource.data.locationVerified is bool
         && request.resource.data.latitude is number
         && request.resource.data.longitude is number
@@ -618,6 +632,70 @@ service cloud.firestore {
           || isSuperAdmin()
           || (isAdmin() && request.resource.data.hostelId in userData(request.auth.uid).hostelIds)
         );
+      allow update, delete: if false;
+    }
+
+
+    // Student movement requests and Warden approval workflow.
+    match /hostelMovementRequests/{requestId} {
+      allow read: if signedIn() && (
+        resource.data.studentUid == request.auth.uid
+        || isSuperAdmin()
+        || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds)
+      );
+      allow create: if isStudent()
+        && request.resource.data.keys().hasOnly([
+          'studentUid','studentName','studentEmail','hostelId','hostelName','room',
+          'type','startDate','endDate','destination','reason','approvalStatus','createdAt','updatedAt'
+        ])
+        && request.resource.data.studentUid == request.auth.uid
+        && exists(/databases/$(database)/documents/studentProfiles/$(request.auth.uid))
+        && get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.approvalStatus == 'approved'
+        && request.resource.data.hostelId == get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.hostelId
+        && request.resource.data.type in ['OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
+        && request.resource.data.startDate is string
+        && request.resource.data.endDate is string
+        && request.resource.data.startDate <= request.resource.data.endDate
+        && request.resource.data.destination is string && request.resource.data.destination.size() > 0
+        && request.resource.data.reason is string && request.resource.data.reason.size() > 0
+        && request.resource.data.approvalStatus == 'pending';
+      allow update: if (isSuperAdmin() || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds))
+        && resource.data.approvalStatus == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'approvalStatus','approvedBy','approvedByEmail','approvedAt','updatedAt','rejectionReason'
+        ])
+        && request.resource.data.approvalStatus in ['approved','rejected']
+        && request.resource.data.approvedBy == request.auth.uid
+        && request.resource.data.approvedByEmail == request.auth.token.email
+        && (
+          request.resource.data.approvalStatus != 'rejected'
+          || (request.resource.data.rejectionReason is string && request.resource.data.rejectionReason.size() > 0)
+        );
+      allow delete: if false;
+    }
+
+    // Daily approved movement exemptions are created only by Admin/Warden decisions.
+    match /dailyMovementApprovals/{approvalId} {
+      allow read: if signedIn() && (
+        resource.data.studentUid == request.auth.uid
+        || isSuperAdmin()
+        || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds)
+      );
+      allow create: if (isSuperAdmin() || (isAdmin() && request.resource.data.hostelId in userData(request.auth.uid).hostelIds))
+        && request.resource.data.keys().hasOnly([
+          'studentUid','hostelId','date','type','requestId','approvalStatus',
+          'approvedBy','approvedByEmail','approvedAt','startDate','endDate'
+        ])
+        && request.resource.data.studentUid is string
+        && request.resource.data.date is string
+        && request.resource.data.type in ['OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
+        && request.resource.data.approvalStatus == 'approved'
+        && request.resource.data.requestId is string
+        && request.resource.data.approvedBy == request.auth.uid
+        && request.resource.data.approvedByEmail == request.auth.token.email
+        && approvalId == request.resource.data.studentUid + '_' + request.resource.data.date
+        && exists(/databases/$(database)/documents/hostelMovementRequests/$(request.resource.data.requestId))
+        && get(/databases/$(database)/documents/hostelMovementRequests/$(request.resource.data.requestId)).data.approvalStatus == 'pending';
       allow update, delete: if false;
     }
 
