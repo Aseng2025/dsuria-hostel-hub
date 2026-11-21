@@ -1,132 +1,267 @@
+
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function userPath(uid) { return /databases/$(database)/documents/users/$(uid); }
-    function hasUser(uid) { return exists(userPath(uid)); }
-    function userData(uid) { return get(userPath(uid)).data; }
-    function email() { return request.auth.token.email.lower(); }
-    function isSuper() {
+
+    // =========================================
+    // HELPER FUNCTIONS
+    // =========================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function approvedPath(email) {
+      return /databases/$(database)/documents/approvedUsers/$(email);
+    }
+
+    function hasUser(uid) {
+      return exists(userPath(uid));
+    }
+
+    function userData(uid) {
+      return get(userPath(uid)).data;
+    }
+
+    function isSuperAdmin() {
       return signedIn()
-        && request.auth.token.email_verified == true
-        && email() == 'mhybsi91@gmail.com';
+        && request.auth.token.email == 'mhybsi91@gmail.com'
+        && request.auth.token.email_verified == true;
     }
-    function isAdmin() {
-      return isSuper() || (
-        signedIn() && hasUser(request.auth.uid)
-        && userData(request.auth.uid).role == 'admin'
-        && userData(request.auth.uid).status == 'active'
-      );
-    }
+
     function isActiveUser() {
-      return signedIn() && hasUser(request.auth.uid)
+      return signedIn()
+        && hasUser(request.auth.uid)
         && userData(request.auth.uid).status == 'active';
     }
 
-    match /approvedUsers/{id} {
-      allow read: if signedIn() && (id == email() || isSuper());
-      allow create, update: if isSuper()
-        && id.matches('^[^@]+@[^@]+\\.[^@]+$')
-        && request.resource.data.keys().hasOnly(['role', 'status', 'hostelIds', 'addedBy', 'addedAt', 'updatedAt'])
-        && request.resource.data.role in ['student', 'admin']
-        && (!('status' in request.resource.data) || request.resource.data.status in ['active', 'inactive'])
-        && (!('hostelIds' in request.resource.data) || request.resource.data.hostelIds is list);
-      allow delete: if isSuper();
+    function isAdmin() {
+      return isActiveUser()
+        && userData(request.auth.uid).role == 'admin';
     }
 
-    match /users/{uid} {
-      allow read: if signedIn() && (uid == request.auth.uid || isSuper());
-      allow create: if signedIn() && uid == request.auth.uid
-        && request.resource.data.keys().hasOnly([
-          'email', 'displayName', 'role', 'status', 'hostelIds', 'createdAt', 'lastLoginAt'
-        ])
-        && request.resource.data.email == email()
-        && request.resource.data.status == 'active'
+    function isStudent() {
+      return isActiveUser()
+        && userData(request.auth.uid).role == 'student';
+    }
+
+    function isApprovedEmail(email) {
+      return signedIn()
+        && request.auth.token.email == email
+        && exists(approvedPath(email))
+        && get(approvedPath(email)).data.status == 'active';
+    }
+
+    function validStudentHostel(hostelId) {
+      return hostelId is string
+        && exists(/databases/$(database)/documents/hostels/$(hostelId))
+        && get(/databases/$(database)/documents/hostels/$(hostelId)).data.status == 'active';
+    }
+
+    function assignedToHostel(hostelId) {
+      return isAdmin()
+        && hostelId is string
+        && hostelId in userData(request.auth.uid).hostelIds;
+    }
+
+    function canReadStudentRecord(studentUid) {
+      return signedIn()
         && (
-          (isSuper() && request.resource.data.role == 'superadmin')
+          request.auth.uid == studentUid
+          || isSuperAdmin()
           || (
-            exists(/databases/$(database)/documents/approvedUsers/$(email()))
-            && get(/databases/$(database)/documents/approvedUsers/$(email())).data.status != 'inactive'
-            && request.resource.data.role ==
-              get(/databases/$(database)/documents/approvedUsers/$(email())).data.role
-            && request.resource.data.role in ['student', 'admin']
-            && (('hostelIds' in get(/databases/$(database)/documents/approvedUsers/$(email())).data) ? request.resource.data.hostelIds == get(/databases/$(database)/documents/approvedUsers/$(email())).data.hostelIds : request.resource.data.hostelIds == [])
+            isAdmin()
+            && exists(/databases/$(database)/documents/studentProfiles/$(studentUid))
+            && assignedToHostel(
+              get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.hostelId
+            )
           )
         );
-      allow update: if isSuper()
+    }
+
+    function validProfileData() {
+      return request.resource.data.keys().hasOnly([
+        'uid',
+        'email',
+        'fullName',
+        'phone',
+        'programme',
+        'hostelId',
+        'hostelName',
+        'room',
+        'updatedAt'
+      ])
+      && request.resource.data.uid == request.auth.uid
+      && request.resource.data.email == request.auth.token.email
+      && request.resource.data.fullName is string
+      && request.resource.data.fullName.size() > 0
+      && request.resource.data.fullName.size() <= 100
+      && request.resource.data.phone is string
+      && request.resource.data.programme is string
+      && request.resource.data.hostelId is string
+      && request.resource.data.hostelName is string
+      && request.resource.data.room is string
+      && validStudentHostel(request.resource.data.hostelId);
+    }
+
+    function validEmergencyData() {
+      return request.resource.data.keys().hasOnly([
+        'uid',
+        'studentEmail',
+        'contacts',
+        'updatedAt'
+      ])
+      && request.resource.data.uid == request.auth.uid
+      && request.resource.data.studentEmail == request.auth.token.email
+      && request.resource.data.contacts is list
+      && request.resource.data.contacts.size() == 2;
+    }
+
+    // =========================================
+    // APPROVED USERS
+    // Super Admin manages approved accounts
+    // =========================================
+
+    match /approvedUsers/{email} {
+
+      allow read: if isSuperAdmin()
         || (
-          signedIn() && uid == request.auth.uid
+          signedIn()
+          && request.auth.token.email == email
+        );
+
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    // =========================================
+    // USERS
+    // User can read own account.
+    // Super Admin manages all accounts.
+    // =========================================
+
+    match /users/{uid} {
+
+      allow read: if isSuperAdmin()
+        || (signedIn() && request.auth.uid == uid);
+
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && (
+          (
+            request.auth.token.email == 'mhybsi91@gmail.com'
+            && request.resource.data.role == 'superadmin'
+            && request.resource.data.status == 'active'
+          )
+          ||
+          (
+            isApprovedEmail(request.auth.token.email)
+            && request.resource.data.role ==
+              get(approvedPath(request.auth.token.email)).data.role
+            && request.resource.data.status == 'active'
+            && request.resource.data.hostelIds ==
+              get(approvedPath(request.auth.token.email)).data.hostelIds
+          )
+        );
+
+      allow update: if isSuperAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+          && resource.data.email == request.auth.token.email
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['displayName', 'lastLoginAt', 'hostelIds'])
-          && (!('hostelIds' in request.resource.data) || request.resource.data.hostelIds == get(/databases/$(database)/documents/approvedUsers/$(email())).data.hostelIds)
+          && request.resource.data.hostelIds ==
+            get(approvedPath(request.auth.token.email)).data.hostelIds
         );
-      allow delete: if false;
+
+      allow delete: if isSuperAdmin();
     }
 
-    match /studentProfiles/{uid} {
-      allow read: if signedIn() && (uid == request.auth.uid || isAdmin());
-      allow create, update: if signedIn() && uid == request.auth.uid
-        && isActiveUser()
-        && request.resource.data.keys().hasOnly([
-          'uid', 'email', 'fullName', 'phone', 'programme', 'room', 'updatedAt'
-        ])
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.email == email()
-        && request.resource.data.fullName is string
-        && request.resource.data.fullName.size() > 0
-        && request.resource.data.fullName.size() <= 100
-        && request.resource.data.phone is string
-        && request.resource.data.programme is string
-        && request.resource.data.room is string;
-      allow delete: if isSuper();
-    }
-
-    match /emergencyContacts/{uid} {
-      allow read: if signedIn() && (uid == request.auth.uid || isAdmin());
-      allow create, update: if signedIn() && uid == request.auth.uid
-        && isActiveUser()
-        && request.resource.data.keys().hasOnly([
-          'uid', 'studentEmail', 'contacts', 'updatedAt'
-        ])
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.studentEmail == email()
-        && request.resource.data.contacts is list
-        && request.resource.data.contacts.size() == 2
-        && request.resource.data.contacts[0].keys().hasOnly([
-          'fullName', 'phone', 'relationship', 'address'
-        ])
-        && request.resource.data.contacts[1].keys().hasOnly([
-          'fullName', 'phone', 'relationship', 'address'
-        ])
-        && request.resource.data.contacts[0].fullName is string
-        && request.resource.data.contacts[0].phone is string
-        && request.resource.data.contacts[0].relationship is string
-        && request.resource.data.contacts[0].address is string
-        && request.resource.data.contacts[1].fullName is string
-        && request.resource.data.contacts[1].phone is string
-        && request.resource.data.contacts[1].relationship is string
-        && request.resource.data.contacts[1].address is string;
-      allow delete: if isSuper();
-    }
+    // =========================================
+    // HOSTELS
+    // Students can read active hostels.
+    // Super Admin manages hostel records.
+    // =========================================
 
     match /hostels/{hostelId} {
-      allow read: if isSuper() || (isActiveUser() && userData(request.auth.uid).role == 'admin' && hostelId in userData(request.auth.uid).hostelIds);
-      allow create: if isSuper() && request.resource.data.keys().hasOnly(['name', 'status', 'createdAt', 'createdBy']) && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.status == 'active' && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isSuper() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'status', 'updatedAt', 'updatedBy']) && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.status in ['active', 'inactive'] && request.resource.data.updatedBy == request.auth.uid;
-      allow delete: if false;
+
+      allow read: if isSuperAdmin()
+        || (
+          isActiveUser()
+          && resource.data.status == 'active'
+        );
+
+      allow create, update, delete: if isSuperAdmin();
     }
 
+    // =========================================
+    // STUDENT PROFILES
+    // Students manage their own profile.
+    // Admin reads only assigned hostel records.
+    // =========================================
+
+    match /studentProfiles/{studentUid} {
+
+      allow read: if canReadStudentRecord(studentUid);
+
+      allow create: if signedIn()
+        && request.auth.uid == studentUid
+        && isStudent()
+        && validProfileData();
+
+      allow update: if signedIn()
+        && request.auth.uid == studentUid
+        && isStudent()
+        && validProfileData();
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // =========================================
+    // EMERGENCY CONTACTS
+    // Student manages own emergency contacts.
+    // Admin reads records for assigned hostels.
+    // =========================================
+
+    match /emergencyContacts/{studentUid} {
+
+      allow read: if canReadStudentRecord(studentUid);
+
+      allow create, update: if signedIn()
+        && request.auth.uid == studentUid
+        && isStudent()
+        && validEmergencyData();
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // =========================================
+    // ADMIN AUDIT LOGS
+    // Super Admin only.
+    // No update or delete permitted.
+    // =========================================
+
     match /adminAuditLogs/{logId} {
-      allow read: if isSuper();
-      allow create: if isSuper()
-        && request.resource.data.keys().hasOnly([
-          'action', 'targetEmail', 'oldRole', 'newRole', 'reason',
-          'performedBy', 'performedByEmail', 'createdAt'
-        ])
+
+      allow read: if isSuperAdmin();
+
+      allow create: if isSuperAdmin()
         && request.resource.data.performedBy == request.auth.uid
-        && request.resource.data.performedByEmail == email();
+        && request.resource.data.performedByEmail == request.auth.token.email;
+
       allow update, delete: if false;
     }
+
+    // =========================================
+    // DEFAULT DENY
+    // All unspecified collections are protected.
+    // =========================================
 
     match /{document=**} {
       allow read, write: if false;
