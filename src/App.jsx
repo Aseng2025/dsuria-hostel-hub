@@ -404,6 +404,8 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
             </p>
           </section>
         )
+      ) : id === 'daily-status' ? (
+        <DailyStudentStatus user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} />
       ) : id === 'rules' ? (
         <HostelRules user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} />
       ) : id === 'admin' && isSuper ? (
@@ -1579,6 +1581,211 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
   );
 }
 
+
+
+const DAILY_STATUS_OPTIONS = ['AT HOSTEL', 'OUTING', 'BALIK RUMAH', 'BALIK KAMPUNG', 'CUTI'];
+const DAILY_GEOFENCE = { lat: 3.1516121, lng: 101.7471753, radius: 100 };
+
+function malaysiaDateKey() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return values.year + '-' + values.month + '-' + values.day;
+}
+
+function geoDistance(lat1, lon1, lat2, lon2) {
+  const rad = n => n * Math.PI / 180;
+  const a = Math.sin(rad(lat2-lat1)/2) ** 2 + Math.cos(rad(lat1))*Math.cos(rad(lat2))*Math.sin(rad(lon2-lon1)/2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
+  const today = malaysiaDateKey();
+  const docId = user.uid + '_' + today;
+  const [status, setStatus] = useState('AT HOSTEL');
+  const [record, setRecord] = useState(null);
+  const [students, setStudents] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [date, setDate] = useState(today);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState('daily');
+  const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
+
+  useEffect(() => {
+    if (profile.role !== 'student') return undefined;
+    return onSnapshot(doc(db, 'dailyStudentStatuses', docId), snap => {
+      const value = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+      setRecord(value);
+      if (value?.status && DAILY_STATUS_OPTIONS.includes(value.status)) setStatus(value.status);
+      setLoading(false);
+    }, e => { setError(friendlyError(e)); setLoading(false); });
+  }, [profile.role, docId]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let active = true;
+    const studentMap = new Map();
+    const statusMap = new Map();
+    const stops = [];
+    const publish = () => {
+      if (!active) return;
+      setStudents(Array.from(studentMap.values()).flat());
+      setRecords(Array.from(statusMap.values()).flat());
+      setLoading(false);
+    };
+    const watchHostel = hostelId => {
+      stops.push(onSnapshot(query(collection(db, 'studentProfiles'), where('hostelId', '==', hostelId)), snap => {
+        studentMap.set(hostelId, snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(x => x.approvalStatus === 'approved'));
+        publish();
+      }, e => setError(friendlyError(e))));
+      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('hostelId', '==', hostelId), where('date', '==', date)), snap => {
+        statusMap.set(hostelId, snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        publish();
+      }, e => setError(friendlyError(e))));
+    };
+    if (isSuper) {
+      stops.push(onSnapshot(collection(db, 'studentProfiles'), snap => {
+        studentMap.set('all', snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(x => x.approvalStatus === 'approved'));
+        publish();
+      }, e => setError(friendlyError(e))));
+      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('date', '==', date)), snap => {
+        statusMap.set('all', snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        publish();
+      }, e => setError(friendlyError(e))));
+    } else if (hostelIds.length) hostelIds.forEach(watchHostel);
+    else setLoading(false);
+    return () => { active = false; stops.forEach(stop => stop()); };
+  }, [isAdmin, isSuper, hostelIds.join('|'), date]);
+
+  const save = async () => {
+    setBusy(true); setError(''); setMessage('');
+    try {
+      if (!profile.hostelId) throw new Error('Profil pelajar belum mempunyai penempatan hostel.');
+      const gps = await new Promise((resolve, reject) => {
+        if (!navigator.geolocation) return reject(new Error('GPS tidak disokong oleh browser.'));
+        navigator.geolocation.getCurrentPosition(p => resolve({
+          lat: p.coords.latitude, lng: p.coords.longitude, accuracy: Math.round(p.coords.accuracy),
+        }), e => reject(new Error(e.code === 1 ? 'Kebenaran GPS ditolak. Benarkan Location untuk website ini.' : 'Lokasi GPS tidak dapat diperoleh. Cuba lagi.')),
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+      });
+      const distance = geoDistance(gps.lat, gps.lng, DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng);
+      const verified = distance <= DAILY_GEOFENCE.radius;
+      const finalStatus = verified ? 'AT HOSTEL' : status;
+      const previous = record;
+      await setDoc(doc(db, 'dailyStudentStatuses', docId), {
+        studentUid: user.uid, studentName: profile.fullName || profile.displayName || '',
+        studentEmail: profile.email || user.email || '', hostelId: profile.hostelId,
+        hostelName: profile.hostelName || '', room: profile.room || '', date: today,
+        status: finalStatus, locationVerified: verified, latitude: gps.lat, longitude: gps.lng,
+        accuracy: gps.accuracy, distanceFromHostel: Math.round(distance),
+        lastLocationAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: user.uid,
+        createdAt: previous?.createdAt || serverTimestamp(),
+      });
+      await addDoc(collection(db, 'studentStatusAuditLogs'), {
+        studentUid: user.uid, studentName: profile.fullName || '', hostelId: profile.hostelId,
+        date: today, oldStatus: previous?.status || null, newStatus: finalStatus,
+        locationVerified: verified, distanceFromHostel: Math.round(distance),
+        action: 'STUDENT_STATUS_UPDATED', performedBy: user.uid,
+        performedByEmail: profile.email || user.email || '', createdAt: serverTimestamp(),
+      });
+      setStatus(finalStatus);
+      setMessage(verified ? 'GPS disahkan. Status AT HOSTEL dikemas kini secara automatik.' : 'Status dan lokasi GPS berjaya direkodkan. Lokasi berada di luar radius 100 meter.');
+      setNotice('Daily Student Status dikemas kini.');
+    } catch (e) { setError(e.message || friendlyError(e)); }
+    finally { setBusy(false); }
+  };
+
+  const correct = async (item, nextStatus) => {
+    const reason = window.prompt('Sebab pembetulan status:');
+    if (!reason?.trim()) return;
+    setBusy(true); setError('');
+    try {
+      await updateDoc(doc(db, 'dailyStudentStatuses', item.id), {
+        status: nextStatus, correctionReason: reason.trim(), correctedBy: user.uid,
+        updatedBy: user.uid, updatedAt: serverTimestamp(),
+      });
+      await addDoc(collection(db, 'studentStatusAuditLogs'), {
+        studentUid: item.studentUid, studentName: item.studentName || '', hostelId: item.hostelId,
+        date: item.date, oldStatus: item.status, newStatus: nextStatus, reason: reason.trim(),
+        action: 'WARDEN_STATUS_CORRECTION', performedBy: user.uid,
+        performedByEmail: profile.email || user.email || '', createdAt: serverTimestamp(),
+      });
+      setMessage('Pembetulan direkodkan dalam audit log.');
+    } catch (e) { setError(friendlyError(e)); }
+    finally { setBusy(false); }
+  };
+
+  if (profile.role === 'student') return (
+    <div className="space-y-5">
+      <section className="card">
+        <h3 className="section-title">Kemas Kini Status Harian</h3>
+        <p className="muted mt-1">Pilih status keberadaan dan sahkan GPS setiap hari serta ketika kembali ke hostel.</p>
+        <p className="mt-3 text-sm text-slate-600">Tarikh: <b>{today}</b> · Peringatan: <b>9:30 malam</b> · Curfew: <b>10:00 malam</b></p>
+        {error && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {message && <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+        {loading ? <p className="muted mt-3">Memuatkan status…</p> : <>
+          <label className="mt-4 block text-sm font-medium">Status keberadaan
+            <select className="field mt-1" value={status} onChange={e => setStatus(e.target.value)}>
+              {DAILY_STATUS_OPTIONS.map(item => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm">
+            <p><b>Status hari ini:</b> {record?.status || 'Belum dikemas kini'}</p>
+            <p><b>GPS:</b> {record?.locationVerified ? 'Disahkan dalam radius 100m' : 'Belum disahkan dalam radius 100m'}</p>
+            <p><b>Lokasi terakhir:</b> {record?.lastLocationAt?.toDate ? record.lastLocationAt.toDate().toLocaleString('ms-MY') : '—'}</p>
+            {record?.distanceFromHostel != null && <p><b>Jarak:</b> {record.distanceFromHostel} meter</p>}
+          </div>
+          <button className="btn-primary mt-4 w-full" disabled={busy} onClick={save}>
+            <MapPin size={17}/> {busy ? 'Mengesahkan GPS…' : 'Kemas Kini Status & Sahkan GPS'}
+          </button>
+        </>}
+      </section>
+      <section className="card"><h3 className="section-title">Peringatan & Curfew</h3><p className="muted mt-1">Peringatan ditetapkan pada 9:30 malam. GPS diperlukan setiap hari dan semasa kembali. Kelulusan CUTI, BALIK RUMAH, BALIK KAMPUNG atau OUTING yang sah memberi pengecualian daripada LATE RETURN.</p></section>
+    </div>
+  );
+
+  if (!isAdmin) return <section className="card"><p>Akses tidak dibenarkan.</p></section>;
+  const byStudent = new Map(records.map(item => [item.studentUid, item]));
+  const counts = ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED','LATE RETURN'].map(s => ({ status: s, count: records.filter(r => r.status === s).length }));
+  const visibleRecords = period === 'daily' ? records : records.filter(r => period === 'weekly' ? r.date >= date : r.date.slice(0,7) === date.slice(0,7));
+  return (
+    <div className="space-y-5">
+      <section className="card">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="section-title">Pemantauan Status Pelajar</h3><p className="muted mt-1">{isSuper ? 'Semua hostel' : 'Hostel ditugaskan'} · {date}</p></div><input className="field max-w-44" type="date" value={date} onChange={e => setDate(e.target.value)}/></div>
+        {error && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {message && <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-lg bg-slate-50 p-3"><p className="muted">Jumlah pelajar</p><b className="text-2xl">{students.length}</b></div>
+          <div className="rounded-lg bg-slate-50 p-3"><p className="muted">Ada rekod</p><b className="text-2xl">{records.length}</b></div>
+          <div className="rounded-lg bg-slate-50 p-3"><p className="muted">AT HOSTEL</p><b className="text-2xl">{byStudent.size ? counts[0].count : 0}</b></div>
+          <div className="rounded-lg bg-slate-50 p-3"><p className="muted">Belum rekod</p><b className="text-2xl">{Math.max(0, students.length - records.length)}</b></div>
+        </div>
+      </section>
+      <section className="card">
+        <h3 className="section-title">Senarai Pelajar</h3>
+        {loading ? <p className="muted mt-3">Memuatkan rekod…</p> : students.map(student => {
+          const item = byStudent.get(student.uid);
+          return <article key={student.uid} className="mt-3 rounded-xl border p-3">
+            <div className="flex flex-wrap justify-between gap-2"><div><b>{student.fullName || student.email}</b><p className="text-xs text-slate-500">{student.hostelName || student.hostelId} · Bilik {student.room || '—'}</p></div><b className="text-sm">{item?.status || 'NOT VERIFIED'}</b></div>
+            <p className="mt-2 text-xs text-slate-500">GPS: {item?.locationVerified ? 'Verified' : 'Belum verified'} · Jarak: {item?.distanceFromHostel ?? '—'}m · Kemas kini: {item?.lastLocationAt?.toDate ? item.lastLocationAt.toDate().toLocaleString('ms-MY') : '—'}</p>
+            {item && <select className="field mt-2 max-w-60" defaultValue="" disabled={busy} onChange={e => { if (e.target.value) correct(item, e.target.value); }}>
+              <option value="">Pembetulan status (warden)</option>
+              {['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED','LATE RETURN'].filter(s => s !== item.status).map(s => <option key={s} value={s}>{s}</option>)}
+            </select>}
+          </article>;
+        })}
+        {!loading && !students.length && <p className="muted mt-3">Tiada pelajar diluluskan dalam skop akses ini.</p>}
+      </section>
+      <section className="card">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="section-title">Laporan Status</h3><select className="field max-w-44" value={period} onChange={e => setPeriod(e.target.value)}><option value="daily">Harian</option><option value="weekly">Mingguan</option><option value="monthly">Bulanan</option></select></div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{counts.map(x => <div key={x.status} className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">{x.status}</p><b className="text-xl">{x.count}</b></div>)}</div>
+        <p className="muted mt-3 text-xs">Ringkasan berdasarkan rekod yang dimuatkan untuk tarikh pilihan. Sejarah mingguan dan bulanan penuh akan memerlukan carian rekod merentasi julat tarikh.</p>
+      </section>
+    </div>
+  );
+}
 
 function AuditLog() {
   const [logs, setLogs] = useState([])
