@@ -828,6 +828,7 @@ function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
   },[user.uid]);
 
   useEffect(()=>onSnapshot(query(collection(db,'hostels'),where('status','==','active')),snap=>{setHostels(snap.docs.map(d=>({id:d.id,...d.data()})));setHostelLoading(false);},e=>{setError(friendlyError(e));setHostelLoading(false);}),[]);
+  useEffect(()=>onSnapshot(doc(db,'studentProfiles',user.uid),snap=>{if(snap.exists()){setStatus(snap.data().approvalStatus||'draft');setRejectionReason(snap.data().rejectionReason||'');}} ,e=>setError(friendlyError(e))),[user.uid]);
   useEffect(()=>onSnapshot(query(collection(db,'studentActivityLogs'),where('studentUid','==',user.uid)),snap=>setLogs(snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),e=>setError(friendlyError(e))),[user.uid]);
 
   const changeContact=(i,k,v)=>setContacts(old=>old.map((c,j)=>j===i?{...c,[k]:v}:c));
