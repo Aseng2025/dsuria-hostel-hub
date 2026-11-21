@@ -128,7 +128,12 @@ service cloud.firestore {
         'hostelId',
         'hostelName',
         'room',
-        'updatedAt'
+        'updatedAt',
+        'approvalStatus',
+        'approvedBy',
+        'approvedByEmail',
+        'approvedAt',
+        'rejectionReason'
       ])
       && request.resource.data.uid == request.auth.uid
       && request.resource.data.email == request.auth.token.email
@@ -255,10 +260,43 @@ service cloud.firestore {
 
       allow read: if canReadStudentRecord(studentUid);
 
-      allow create, update: if signedIn()
+      // Pelajar boleh cipta profil. Selepas itu mereka hanya boleh kemas kini
+      // maklumat peribadi; status kelulusan kekal di bawah kawalan Admin.
+      allow create: if signedIn()
         && request.auth.uid == studentUid
         && isStudent()
-        && validProfileData();
+        && validProfileData()
+        && !('approvalStatus' in request.resource.data)
+        && !('approvedBy' in request.resource.data)
+        && !('approvedAt' in request.resource.data)
+        && !('rejectionReason' in request.resource.data);
+
+      allow update: if (
+        signedIn()
+        && request.auth.uid == studentUid
+        && isStudent()
+        && validProfileData()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'fullName', 'phone', 'programme', 'hostelId', 'hostelName', 'room', 'updatedAt'
+        ])
+        && (
+          !('approvalStatus' in resource.data)
+          || resource.data.approvalStatus != 'approved'
+          || (
+            request.resource.data.hostelId == resource.data.hostelId
+            && request.resource.data.room == resource.data.room
+          )
+        )
+      ) || (
+        isAdmin()
+        && assignedToHostel(resource.data.hostelId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'approvalStatus', 'approvedBy', 'approvedByEmail', 'approvedAt', 'rejectionReason', 'updatedAt'
+        ])
+        && request.resource.data.approvalStatus in ['approved', 'rejected']
+        && request.resource.data.approvedBy == request.auth.uid
+        && request.resource.data.approvedByEmail == request.auth.token.email
+      );
 
       allow delete: if isSuperAdmin();
     }
@@ -300,6 +338,24 @@ service cloud.firestore {
         ])
         && request.resource.data.performedBy == request.auth.uid
         && request.resource.data.performedByEmail == request.auth.token.email;
+
+      allow update, delete: if false;
+    }
+
+    // =========================================
+    // STUDENT APPROVAL AUDIT LOGS
+    // =========================================
+
+    match /studentApprovalLogs/{logId} {
+      allow read: if isSuperAdmin()
+        || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds);
+
+      allow create: if isAdmin()
+        && request.resource.data.hostelId is string
+        && assignedToHostel(request.resource.data.hostelId)
+        && request.resource.data.performedBy == request.auth.uid
+        && request.resource.data.performedByEmail == request.auth.token.email
+        && request.resource.data.action in ['STUDENT_APPROVED', 'STUDENT_REJECTED'];
 
       allow update, delete: if false;
     }
