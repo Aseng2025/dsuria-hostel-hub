@@ -583,9 +583,9 @@ service cloud.firestore {
         && request.resource.data.studentUid == resource.data.studentUid
         && request.resource.data.hostelId == resource.data.hostelId
         && request.resource.data.date == resource.data.date
-        && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
+        && request.resource.data.status in ['AT HOSTEL','NOT VERIFIED','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
         && (
-          request.resource.data.status == 'AT HOSTEL'
+          request.resource.data.status in ['AT HOSTEL','NOT VERIFIED']
           || hasApprovedMovementStatus(request.auth.uid, request.resource.data.date, request.resource.data.status)
         )
         && request.resource.data.locationVerified is bool
@@ -624,7 +624,7 @@ service cloud.firestore {
         && request.resource.data.hostelId is string
         && request.resource.data.date is string
         && request.resource.data.newStatus is string
-        && request.resource.data.action in ['STUDENT_STATUS_UPDATED','WARDEN_STATUS_CORRECTION']
+        && request.resource.data.action in ['STUDENT_STATUS_UPDATED','WARDEN_STATUS_CORRECTION','MOVEMENT_REQUEST_APPROVED','MOVEMENT_REQUEST_REJECTED']
         && request.resource.data.performedBy == request.auth.uid
         && request.resource.data.performedByEmail == request.auth.token.email
         && (
@@ -695,7 +695,7 @@ service cloud.firestore {
         && request.resource.data.approvedByEmail == request.auth.token.email
         && approvalId == request.resource.data.studentUid + '_' + request.resource.data.date
         && exists(/databases/$(database)/documents/hostelMovementRequests/$(request.resource.data.requestId))
-        && get(/databases/$(database)/documents/hostelMovementRequests/$(request.resource.data.requestId)).data.approvalStatus == 'pending';
+        && getAfter(/databases/$(database)/documents/hostelMovementRequests/$(request.resource.data.requestId)).data.approvalStatus == 'approved';
       allow update, delete: if false;
     }
 
