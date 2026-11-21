@@ -247,6 +247,7 @@ service cloud.firestore {
         && isStudent()
         && validProfileData()
         && request.resource.data.approvalStatus in ['draft','pending']
+        && (request.resource.data.approvalStatus != 'pending' || existsAfter(/databases/$(database)/documents/emergencyContacts/$(studentUid)))
         && !('approvedBy' in request.resource.data)
         && !('approvedAt' in request.resource.data);
 
@@ -285,6 +286,14 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'fullName','phone','programme','hostelId','hostelName','room','updatedAt','lastEditedBy'
         ])
+      ) || (
+        (isSuperAdmin() || (isAdmin() && assignedToHostel(resource.data.hostelId)))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'approvalStatus','approvedBy','approvedByEmail','approvedAt','rejectionReason','updatedAt'
+        ])
+        && request.resource.data.approvalStatus in ['approved','rejected']
+        && request.resource.data.approvedBy == request.auth.uid
+        && request.resource.data.approvedByEmail == request.auth.token.email
       );
 
       allow delete: if isSuperAdmin();
@@ -302,12 +311,13 @@ service cloud.firestore {
         && request.auth.uid == studentUid
         && isStudent()
         && validEmergencyData(studentUid)
-        && get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.approvalStatus != 'pending'
+        && (!exists(/databases/$(database)/documents/studentProfiles/$(studentUid)) || get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.approvalStatus != 'pending')
         && getAfter(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.approvalStatus in ['draft','pending','rejected']
       ) || (
         isSuperAdmin()
         || (
           isAdmin()
+          && validEmergencyData(studentUid)
           && exists(/databases/$(database)/documents/studentProfiles/$(studentUid))
           && assignedToHostel(get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.hostelId)
         )
