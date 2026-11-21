@@ -1,13 +1,9 @@
-
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // =========================================
-    // HELPER FUNCTIONS
-    // =========================================
-
+    // Identity and role helpers
     function signedIn() {
       return request.auth != null;
     }
@@ -88,66 +84,72 @@ service cloud.firestore {
         );
     }
 
+    // Approved account access
     function validApprovedUser() {
       return request.resource.data.keys().hasOnly([
-        'role',
-        'status',
-        'hostelIds',
-        'addedBy',
-        'addedAt',
-        'updatedAt'
-      ])
-      && request.resource.data.keys().hasAll([
-        'role',
-        'status',
-        'hostelIds'
-      ])
-      && request.resource.data.role in ['admin', 'student']
-      && request.resource.data.status in ['active', 'inactive']
-      && request.resource.data.hostelIds is list
-      && (
-        (
-          request.resource.data.role == 'admin'
-          && request.resource.data.hostelIds.size() > 0
-        )
-        ||
-        (
-          request.resource.data.role == 'student'
-          && request.resource.data.hostelIds.size() == 0
-        )
-      );
+          'role', 'status', 'hostelIds', 'addedBy', 'addedAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll(['role', 'status', 'hostelIds'])
+        && request.resource.data.role in ['admin', 'student']
+        && request.resource.data.status in ['active', 'inactive']
+        && request.resource.data.hostelIds is list
+        && (
+          (request.resource.data.role == 'admin' && request.resource.data.hostelIds.size() > 0)
+          || (request.resource.data.role == 'student' && request.resource.data.hostelIds.size() == 0)
+        );
     }
 
-    function validProfileData() {
+    // Student profile validation. Drafts may be incomplete; submissions may not.
+    function validProfileShape(studentUid) {
       return request.resource.data.keys().hasOnly([
-        'uid','email','fullName','phone','programme','hostelId','hostelName','room',
-        'updatedAt','approvalStatus','approvedBy','approvedByEmail','approvedAt',
-        'rejectionReason','submittedAt','submissionVersion','profilePhotoUrl',
-        'profilePhotoPath','lastEditedBy'
-      ])
-      && request.resource.data.uid == request.auth.uid
-      && request.resource.data.email == request.auth.token.email
-      && request.resource.data.fullName is string
-      && request.resource.data.fullName.size() > 0
-      && request.resource.data.fullName.size() <= 100
-      && request.resource.data.phone is string
-      && request.resource.data.programme is string
-      && request.resource.data.hostelId is string
-      && request.resource.data.hostelName is string
-      && request.resource.data.room is string
-      && request.resource.data.approvalStatus in ['draft','pending','approved','rejected']
-      && validStudentHostel(request.resource.data.hostelId)
-      && (!('profilePhotoUrl' in request.resource.data) || request.resource.data.profilePhotoUrl is string)
-      && (!('profilePhotoPath' in request.resource.data) || request.resource.data.profilePhotoPath is string);
+          'uid', 'email', 'fullName', 'phone', 'programme', 'hostelId',
+          'hostelName', 'room', 'updatedAt', 'approvalStatus', 'approvedBy',
+          'approvedByEmail', 'approvedAt', 'rejectionReason', 'submittedAt',
+          'submissionVersion', 'lastEditedBy'
+        ])
+        && request.resource.data.uid == studentUid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.fullName is string
+        && request.resource.data.fullName.size() <= 100
+        && request.resource.data.phone is string
+        && request.resource.data.programme is string
+        && request.resource.data.hostelId is string
+        && request.resource.data.hostelName is string
+        && request.resource.data.room is string
+        && request.resource.data.approvalStatus in ['draft', 'pending', 'approved', 'rejected'];
     }
 
+    function validSubmittedProfile() {
+      return request.resource.data.fullName.size() > 0
+        && request.resource.data.phone.size() > 0
+        && request.resource.data.programme.size() > 0
+        && request.resource.data.hostelId.size() > 0
+        && request.resource.data.room.size() > 0
+        && validStudentHostel(request.resource.data.hostelId);
+    }
+
+    function validAdminProfileEdit() {
+      return request.resource.data.fullName is string
+        && request.resource.data.fullName.size() > 0
+        && request.resource.data.fullName.size() <= 100
+        && request.resource.data.phone is string
+        && request.resource.data.programme is string
+        && request.resource.data.hostelId is string
+        && validStudentHostel(request.resource.data.hostelId)
+        && request.resource.data.hostelName is string
+        && request.resource.data.room is string;
+    }
+
+    // Emergency contacts: exactly two records with string fields.
     function validEmergencyData(studentUid) {
-      return request.resource.data.keys().hasOnly(['uid','studentEmail','contacts','updatedAt','updatedBy'])
+      return request.resource.data.keys().hasOnly([
+          'uid', 'studentEmail', 'contacts', 'updatedAt', 'updatedBy'
+        ])
         && request.resource.data.uid == studentUid
         && request.resource.data.contacts is list
         && request.resource.data.contacts.size() == 2
-        && request.resource.data.contacts[0].keys().hasOnly(['fullName','phone','relationship','address'])
-        && request.resource.data.contacts[1].keys().hasOnly(['fullName','phone','relationship','address'])
+        && request.resource.data.contacts[0].keys().hasOnly(['fullName', 'phone', 'relationship', 'address'])
+        && request.resource.data.contacts[1].keys().hasOnly(['fullName', 'phone', 'relationship', 'address'])
         && request.resource.data.contacts[0].fullName is string
         && request.resource.data.contacts[0].phone is string
         && request.resource.data.contacts[0].relationship is string
@@ -158,17 +160,29 @@ service cloud.firestore {
         && request.resource.data.contacts[1].address is string;
     }
 
-    // =========================================
-    // APPROVED USERS
-    // =========================================
+    function completeEmergencyContacts(contacts) {
+      return contacts is list
+        && contacts.size() == 2
+        && contacts[0].fullName is string && contacts[0].fullName.size() > 0
+        && contacts[0].phone is string && contacts[0].phone.size() > 0
+        && contacts[0].relationship is string && contacts[0].relationship.size() > 0
+        && contacts[0].address is string && contacts[0].address.size() > 0
+        && contacts[1].fullName is string && contacts[1].fullName.size() > 0
+        && contacts[1].phone is string && contacts[1].phone.size() > 0
+        && contacts[1].relationship is string && contacts[1].relationship.size() > 0
+        && contacts[1].address is string && contacts[1].address.size() > 0;
+    }
 
-    match /approvedUsers/{userEmail} {
-
-      allow read: if isSuperAdmin()
-        || (
-          signedIn()
-          && email() == userEmail
+    function completeEmergencyContactsAfter(studentUid) {
+      return existsAfter(/databases/$(database)/documents/emergencyContacts/$(studentUid))
+        && completeEmergencyContacts(
+          getAfter(/databases/$(database)/documents/emergencyContacts/$(studentUid)).data.contacts
         );
+    }
+
+    // Approved users
+    match /approvedUsers/{userEmail} {
+      allow read: if isSuperAdmin() || (signedIn() && email() == userEmail);
 
       allow create, update: if isSuperAdmin()
         && userEmail.matches('^[^@]+@[^@]+\\.[^@]+$')
@@ -177,14 +191,9 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
-    // =========================================
-    // USERS
-    // =========================================
-
+    // User accounts
     match /users/{uid} {
-
-      allow read: if isSuperAdmin()
-        || (signedIn() && request.auth.uid == uid);
+      allow read: if isSuperAdmin() || (signedIn() && request.auth.uid == uid);
 
       allow create: if signedIn()
         && request.auth.uid == uid
@@ -195,14 +204,11 @@ service cloud.firestore {
             && request.resource.data.role == 'superadmin'
             && request.resource.data.status == 'active'
           )
-          ||
-          (
+          || (
             isApprovedEmail(email())
-            && request.resource.data.role ==
-              get(approvedPath(email())).data.role
+            && request.resource.data.role == get(approvedPath(email())).data.role
             && request.resource.data.status == 'active'
-            && request.resource.data.hostelIds ==
-              get(approvedPath(email())).data.hostelIds
+            && request.resource.data.hostelIds == get(approvedPath(email())).data.hostelIds
           )
         );
 
@@ -211,122 +217,133 @@ service cloud.firestore {
           signedIn()
           && request.auth.uid == uid
           && resource.data.email == request.auth.token.email
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['displayName', 'lastLoginAt', 'hostelIds'])
-          && request.resource.data.hostelIds ==
-            get(approvedPath(email())).data.hostelIds
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'displayName', 'lastLoginAt', 'hostelIds'
+          ])
+          && request.resource.data.hostelIds == get(approvedPath(email())).data.hostelIds
         );
 
       allow delete: if isSuperAdmin();
     }
 
-    // =========================================
-    // HOSTELS
-    // =========================================
-
+    // Hostels
     match /hostels/{hostelId} {
-
       allow read: if isSuperAdmin()
-        || (
-          isActiveUser()
-          && resource.data.status == 'active'
-        );
+        || (isActiveUser() && resource.data.status == 'active');
 
       allow create, update, delete: if isSuperAdmin();
     }
 
-    // =========================================
-    // STUDENT PROFILES
-    // =========================================
-
+    // Student profiles
     match /studentProfiles/{studentUid} {
       allow read: if canReadStudentRecord(studentUid);
 
       allow create: if signedIn()
         && request.auth.uid == studentUid
         && isStudent()
-        && validProfileData()
-        && request.resource.data.approvalStatus in ['draft','pending']
-        && (request.resource.data.approvalStatus != 'pending' || existsAfter(/databases/$(database)/documents/emergencyContacts/$(studentUid)))
+        && validProfileShape(studentUid)
+        && request.resource.data.approvalStatus in ['draft', 'pending']
+        && (
+          request.resource.data.approvalStatus == 'draft'
+          || (
+            validSubmittedProfile()
+            && completeEmergencyContactsAfter(studentUid)
+          )
+        )
         && !('approvedBy' in request.resource.data)
         && !('approvedAt' in request.resource.data);
 
       allow update: if (
-        signedIn()
-        && request.auth.uid == studentUid
-        && isStudent()
-        && resource.data.approvalStatus != 'pending'
-        && validProfileData()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'fullName','phone','programme','hostelId','hostelName','room','updatedAt',
-          'approvalStatus','rejectionReason','submittedAt','submissionVersion',
-          'profilePhotoUrl','profilePhotoPath'
-        ])
-        && request.resource.data.approvalStatus in ['draft','pending','rejected']
-        && (request.resource.data.approvalStatus == resource.data.approvalStatus || request.resource.data.approvalStatus == 'pending')
-        && (
-          request.resource.data.approvalStatus != 'pending'
-          || existsAfter(/databases/$(database)/documents/emergencyContacts/$(studentUid))
+          signedIn()
+          && request.auth.uid == studentUid
+          && isStudent()
+          && resource.data.approvalStatus != 'pending'
+          && validProfileShape(studentUid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'fullName', 'phone', 'programme', 'hostelId', 'hostelName', 'room',
+            'updatedAt', 'approvalStatus', 'rejectionReason', 'submittedAt',
+            'submissionVersion'
+          ])
+          && request.resource.data.approvalStatus in ['draft', 'pending', 'rejected']
+          && (
+            request.resource.data.approvalStatus != 'pending'
+            || (
+              validSubmittedProfile()
+              && completeEmergencyContactsAfter(studentUid)
+            )
+          )
         )
-      ) || (
-        isSuperAdmin()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'fullName','phone','programme','hostelId','hostelName','room','updatedAt',
-          'approvalStatus','approvedBy','approvedByEmail','approvedAt','rejectionReason',
-          'profilePhotoUrl','profilePhotoPath','lastEditedBy'
-        ])
-      ) || (
-        isAdmin()
-        && assignedToHostel(resource.data.hostelId)
-        && assignedToHostel(request.resource.data.hostelId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'fullName','phone','programme','hostelId','hostelName','room','updatedAt','lastEditedBy'
-        ])
-      ) || (
-        (isSuperAdmin() || (isAdmin() && assignedToHostel(resource.data.hostelId)))
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'approvalStatus','approvedBy','approvedByEmail','approvedAt','rejectionReason','updatedAt'
-        ])
-        && request.resource.data.approvalStatus in ['approved','rejected']
-        && (request.resource.data.approvalStatus != 'rejected' || (request.resource.data.rejectionReason is string && request.resource.data.rejectionReason.size() > 0))
-        && request.resource.data.approvedBy == request.auth.uid
-        && request.resource.data.approvedByEmail == request.auth.token.email
-      );
+        || (
+          isSuperAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'fullName', 'phone', 'programme', 'hostelId', 'hostelName', 'room',
+            'updatedAt', 'lastEditedBy'
+          ])
+          && validAdminProfileEdit()
+        )
+        || (
+          isAdmin()
+          && assignedToHostel(resource.data.hostelId)
+          && assignedToHostel(request.resource.data.hostelId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'fullName', 'phone', 'programme', 'hostelId', 'hostelName', 'room',
+            'updatedAt', 'lastEditedBy'
+          ])
+          && validAdminProfileEdit()
+        )
+        || (
+          (isSuperAdmin() || (isAdmin() && assignedToHostel(resource.data.hostelId)))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'approvalStatus', 'approvedBy', 'approvedByEmail', 'approvedAt',
+            'rejectionReason', 'updatedAt'
+          ])
+          && request.resource.data.approvalStatus in ['approved', 'rejected']
+          && (
+            request.resource.data.approvalStatus != 'rejected'
+            || (
+              request.resource.data.rejectionReason is string
+              && request.resource.data.rejectionReason.size() > 0
+            )
+          )
+          && request.resource.data.approvedBy == request.auth.uid
+          && request.resource.data.approvedByEmail == request.auth.token.email
+        );
 
       allow delete: if isSuperAdmin();
     }
 
-    // =========================================
-    // EMERGENCY CONTACTS
-    // =========================================
-
+    // Emergency contacts
     match /emergencyContacts/{studentUid} {
       allow read: if canReadStudentRecord(studentUid);
 
       allow create, update: if (
-        signedIn()
-        && request.auth.uid == studentUid
-        && isStudent()
-        && validEmergencyData(studentUid)
-        && (!exists(/databases/$(database)/documents/studentProfiles/$(studentUid)) || get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.approvalStatus != 'pending')
-        && getAfter(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.approvalStatus in ['draft','pending','rejected']
-      ) || (
-        isSuperAdmin()
-        || (
-          isAdmin()
+          signedIn()
+          && request.auth.uid == studentUid
+          && isStudent()
           && validEmergencyData(studentUid)
-          && exists(/databases/$(database)/documents/studentProfiles/$(studentUid))
-          && assignedToHostel(get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.hostelId)
+          && (
+            !exists(/databases/$(database)/documents/studentProfiles/$(studentUid))
+            || get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.approvalStatus != 'pending'
+          )
+          && getAfter(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.approvalStatus
+            in ['draft', 'pending', 'rejected']
         )
-      );
+        || (
+          (isSuperAdmin() || (
+            isAdmin()
+            && exists(/databases/$(database)/documents/studentProfiles/$(studentUid))
+            && assignedToHostel(
+              get(/databases/$(database)/documents/studentProfiles/$(studentUid)).data.hostelId
+            )
+          ))
+          && validEmergencyData(studentUid)
+          && completeEmergencyContacts(request.resource.data.contacts)
+        );
 
       allow delete: if isSuperAdmin();
     }
 
-    // =========================================
-    // STUDENT ACTIVITY LOGS (IMMUTABLE)
-    // =========================================
-
+    // Immutable student activity logs
     match /studentActivityLogs/{logId} {
       allow read: if signedIn() && (
         request.auth.uid == resource.data.studentUid
@@ -336,8 +353,8 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly([
-          'studentUid','studentEmail','hostelId','action','details',
-          'performedBy','performedByEmail','createdAt'
+          'studentUid', 'studentEmail', 'hostelId', 'action', 'details',
+          'performedBy', 'performedByEmail', 'createdAt'
         ])
         && request.resource.data.studentUid is string
         && request.resource.data.action is string
@@ -347,30 +364,26 @@ service cloud.firestore {
         && (
           (isStudent() && request.resource.data.studentUid == request.auth.uid)
           || isSuperAdmin()
-          || (isAdmin() && assignedToHostel(request.resource.data.hostelId))
+          || (
+            isAdmin()
+            && assignedToHostel(request.resource.data.hostelId)
+            && exists(/databases/$(database)/documents/studentProfiles/$(request.resource.data.studentUid))
+            && get(/databases/$(database)/documents/studentProfiles/$(request.resource.data.studentUid)).data.hostelId
+              == request.resource.data.hostelId
+          )
         );
 
       allow update, delete: if false;
     }
 
-    // =========================================
-    // ADMIN AUDIT LOGS
-    // =========================================
-
+    // Immutable admin audit logs
     match /adminAuditLogs/{logId} {
-
       allow read: if isSuperAdmin();
 
       allow create: if isSuperAdmin()
         && request.resource.data.keys().hasOnly([
-          'action',
-          'targetEmail',
-          'oldRole',
-          'newRole',
-          'reason',
-          'performedBy',
-          'performedByEmail',
-          'createdAt'
+          'action', 'targetEmail', 'oldRole', 'newRole', 'reason',
+          'performedBy', 'performedByEmail', 'createdAt'
         ])
         && request.resource.data.performedBy == request.auth.uid
         && request.resource.data.performedByEmail == request.auth.token.email;
@@ -378,10 +391,7 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // =========================================
-    // STUDENT APPROVAL AUDIT LOGS
-    // =========================================
-
+    // Immutable student approval logs
     match /studentApprovalLogs/{logId} {
       allow read: if isSuperAdmin()
         || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds);
@@ -401,10 +411,7 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // =========================================
-    // DEFAULT DENY
-    // =========================================
-
+    // Deny everything not explicitly allowed above
     match /{document=**} {
       allow read, write: if false;
     }
