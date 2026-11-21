@@ -1328,6 +1328,11 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
   const [content, setContent] = useState('');
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
   const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
+  const rangeStart = period === 'monthly'
+    ? date.slice(0, 7) + '-01'
+    : period === 'weekly'
+      ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
+      : date;
 
   useEffect(() => {
     const rulesQuery = profile.role === 'student'
@@ -1586,11 +1591,13 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
 const DAILY_STATUS_OPTIONS = ['AT HOSTEL', 'OUTING', 'BALIK RUMAH', 'BALIK KAMPUNG', 'CUTI'];
 const DAILY_GEOFENCE = { lat: 3.1516121, lng: 101.7471753, radius: 100 };
 
-function malaysiaDateKey() {
+function malaysiaDateKeyFor(inputDate) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return values.year + '-' + values.month + '-' + values.day;
 }
+
+function malaysiaDateKey() { return malaysiaDateKeyFor(new Date()); }
 
 function geoDistance(lat1, lon1, lat2, lon2) {
   const rad = n => n * Math.PI / 180;
@@ -1640,7 +1647,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         studentMap.set(hostelId, snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(x => x.approvalStatus === 'approved'));
         publish();
       }, e => setError(friendlyError(e))));
-      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('hostelId', '==', hostelId), where('date', '==', date)), snap => {
+      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('hostelId', '==', hostelId), where('date', '>=', rangeStart), where('date', '<=', date)), snap => {
         statusMap.set(hostelId, snap.docs.map(d => ({ id: d.id, ...d.data() })));
         publish();
       }, e => setError(friendlyError(e))));
@@ -1657,7 +1664,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
     } else if (hostelIds.length) hostelIds.forEach(watchHostel);
     else setLoading(false);
     return () => { active = false; stops.forEach(stop => stop()); };
-  }, [isAdmin, isSuper, hostelIds.join('|'), date]);
+  }, [isAdmin, isSuper, hostelIds.join('|'), date, rangeStart]);
 
   const save = async () => {
     setBusy(true); setError(''); setMessage('');
@@ -1682,7 +1689,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         accuracy: gps.accuracy, distanceFromHostel: Math.round(distance),
         lastLocationAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: user.uid,
         createdAt: previous?.createdAt || serverTimestamp(),
-      });
+      }, { merge: true });
       await addDoc(collection(db, 'studentStatusAuditLogs'), {
         studentUid: user.uid, studentName: profile.fullName || '', hostelId: profile.hostelId,
         date: today, oldStatus: previous?.status || null, newStatus: finalStatus,
@@ -1747,9 +1754,9 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
   );
 
   if (!isAdmin) return <section className="card"><p>Akses tidak dibenarkan.</p></section>;
-  const byStudent = new Map(records.map(item => [item.studentUid, item]));
-  const counts = ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED','LATE RETURN'].map(s => ({ status: s, count: records.filter(r => r.status === s).length }));
-  const visibleRecords = period === 'daily' ? records : records.filter(r => period === 'weekly' ? r.date >= date : r.date.slice(0,7) === date.slice(0,7));
+  const byStudent = new Map(visibleRecords.map(item => [item.studentUid, item]));
+  const counts = ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED','LATE RETURN'].map(s => ({ status: s, count: visibleRecords.filter(r => r.status === s).length }));
+  const visibleRecords = records.filter(r => r.date >= rangeStart && r.date <= date);
   return (
     <div className="space-y-5">
       <section className="card">
