@@ -458,7 +458,8 @@ service cloud.firestore {
       allow read: if isSuperAdmin();
       allow create: if isSuperAdmin()
         && request.resource.data.keys().hasOnly([
-          'ruleId','ruleTitle','action','version','performedBy','performedByEmail','createdAt'
+          'ruleId','ruleTitle','action','version','category','content','effectiveDate',
+          'previousTitle','previousContent','performedBy','performedByEmail','createdAt'
         ])
         && request.resource.data.performedBy == request.auth.uid
         && request.resource.data.performedByEmail == request.auth.token.email;
