@@ -184,7 +184,12 @@ service cloud.firestore {
 
     // Approved users
     match /approvedUsers/{userEmail} {
-      allow read: if isSuperAdmin() || (signedIn() && email() == userEmail);
+      allow read: if isSuperAdmin()
+        || (signedIn() && email() == userEmail)
+        || (isAdmin() && resource.data.role == 'admin'
+          && resource.data.status == 'active'
+          && resource.data.hostelIds is list
+          && resource.data.hostelIds.hasAny(userData(request.auth.uid).hostelIds));
 
       allow create, update: if isSuperAdmin()
         && userEmail.matches('^[^@]+@[^@]+\\.[^@]+$')
@@ -312,6 +317,11 @@ service cloud.firestore {
         );
 
       allow delete: if isSuperAdmin();
+    }
+
+    // Soft-deleted student profiles: Super Admin only.
+    match /deletedStudentProfiles/{studentUid} {
+      allow read, create, update, delete: if isSuperAdmin();
     }
 
     // Emergency contacts
