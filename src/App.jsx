@@ -1613,7 +1613,12 @@ const MOVEMENT_TYPES = [
 ];
 
 
-function DestinationMapClick({ onSelect }) {\n  useMapEvents({ click(event) { onSelect({ lat: event.latlng.lat, lng: event.latlng.lng, label: 'Pin manual (' + event.latlng.lat.toFixed(5) + ', ' + event.latlng.lng.toFixed(5) + ')' }); } });\n  return null;\n}\n\nfunction MovementDestinationMap({ selected, onSelect }) {
+function DestinationMapClick({ onSelect }) {
+  useMapEvents({ click(event) { onSelect({ lat: event.latlng.lat, lng: event.latlng.lng, label: 'Pin manual (' + event.latlng.lat.toFixed(5) + ', ' + event.latlng.lng.toFixed(5) + ')' }); } });
+  return null;
+}
+
+function MovementDestinationMap({ selected, onSelect }) {
   const initial = selected ? [selected.lat, selected.lng] : [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng];
   return <div className="mt-3 h-64 overflow-hidden rounded-xl border">
     <MapContainer center={initial} zoom={13} scrollWheelZoom className="h-full w-full">
