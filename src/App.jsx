@@ -426,6 +426,36 @@ function HomeDashboard({ profile, isSuper, onBack }) {
     !isSuper && profile.role === 'admin'
   );
   const [hostelError, setHostelError] = useState('');
+  const [studentSummary, setStudentSummary] = useState({ total: 0, pending: 0, approved: 0, rejected: 0 });
+  const [summaryLoading, setSummaryLoading] = useState(!isSuper && profile.role === 'admin');
+
+  useEffect(() => {
+    if (isSuper || profile.role !== 'admin') return undefined;
+    const ids = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
+    if (ids.length === 0) {
+      setStudentSummary({ total: 0, pending: 0, approved: 0, rejected: 0 });
+      setSummaryLoading(false);
+      return undefined;
+    }
+    if (ids.length > 30) {
+      setSummaryLoading(false);
+      return undefined;
+    }
+    const q = query(collection(db, 'studentProfiles'), where('hostelId', 'in', ids));
+    return onSnapshot(q, snapshot => {
+      const rows = snapshot.docs.map(item => item.data());
+      setStudentSummary({
+        total: rows.length,
+        pending: rows.filter(row => !row.approvalStatus || row.approvalStatus === 'pending').length,
+        approved: rows.filter(row => row.approvalStatus === 'approved').length,
+        rejected: rows.filter(row => row.approvalStatus === 'rejected').length,
+      });
+      setSummaryLoading(false);
+    }, error => {
+      setHostelError(friendlyError(error));
+      setSummaryLoading(false);
+    });
+  }, [isSuper, profile.role, profile.hostelIds]);
 
   useEffect(() => {
     if (isSuper || profile.role !== 'admin') return undefined;
@@ -522,6 +552,24 @@ function HomeDashboard({ profile, isSuper, onBack }) {
           </div>
         </div>
       </section>
+
+      {profile.role === 'admin' && !isSuper && (
+        <section className="grid gap-3 sm:grid-cols-4">
+          {[
+            { label: 'Jumlah pelajar', value: studentSummary.total },
+            { label: 'Menunggu', value: studentSummary.pending },
+            { label: 'Diluluskan', value: studentSummary.approved },
+            { label: 'Ditolak', value: studentSummary.rejected },
+          ].map(item => (
+            <div className="card" key={item.label}>
+              <p className="muted">{item.label}</p>
+              <p className="mt-2 text-3xl font-bold text-navy">
+                {summaryLoading ? '…' : item.value}
+              </p>
+            </div>
+          ))}
+        </section>
+      )}
 
       {profile.role === 'admin' && !isSuper && (
         <section className="card">
