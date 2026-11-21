@@ -554,7 +554,7 @@ service cloud.firestore {
         && request.resource.data.hostelId == get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.hostelId
         && get(/databases/$(database)/documents/studentProfiles/$(request.auth.uid)).data.approvalStatus == 'approved'
         && request.resource.data.date is string
-        && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI']
+        && request.resource.data.status in ['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI','NOT VERIFIED']
         && request.resource.data.locationVerified is bool
         && request.resource.data.latitude is number
         && request.resource.data.longitude is number
