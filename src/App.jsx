@@ -1612,11 +1612,28 @@ const MOVEMENT_TYPES = [
   { value: 'CUTI', label: 'CUTI' },
 ];
 
+
+function MovementDestinationMap({ selected, onSelect }) {
+  const initial = selected ? [selected.lat, selected.lng] : [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng];
+  return <div className="mt-3 h-64 overflow-hidden rounded-xl border">
+    <MapContainer center={initial} zoom={13} scrollWheelZoom className="h-full w-full">
+      <MapRecenter center={selected ? [selected.lat, selected.lng] : [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng]}/>
+      <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
+      {selected && <CircleMarker center={[selected.lat,selected.lng]} radius={9} pathOptions={{color:'#b45309',fillColor:'#f59e0b',fillOpacity:1}}><Popup>{selected.label}</Popup></CircleMarker>}
+    </MapContainer>
+  </div>
+}
+
 function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
   const [type, setType] = useState('OUTING');
   const [startDate, setStartDate] = useState(malaysiaDateKey());
   const [endDate, setEndDate] = useState(malaysiaDateKey());
   const [destination, setDestination] = useState('');
+  const [destinationPin, setDestinationPin] = useState(null);
+  const [destinationSearch, setDestinationSearch] = useState('');
+  const [destinationResults, setDestinationResults] = useState([]);
+  const [departureTime, setDepartureTime] = useState('08:00');
+  const [returnTime, setReturnTime] = useState('18:00');
   const [reason, setReason] = useState('');
   const [rows, setRows] = useState([]);
   const [students, setStudents] = useState({});
@@ -1656,19 +1673,39 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
     return () => { active = false; };
   }, [isAdmin, rows.map(row => row.id).join('|')]);
 
+
+  const calculateDays = (from, to) => {
+    if (!from || !to || to < from) return 0;
+    const start = new Date(from + 'T12:00:00');
+    const end = new Date(to + 'T12:00:00');
+    return Math.round((end - start) / 86400000) + 1;
+  };
+  const searchDestination = async () => {
+    if (!destinationSearch.trim()) return;
+    setError('');
+    try {
+      const response = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=' + encodeURIComponent(destinationSearch.trim()));
+      if (!response.ok) throw new Error('Carian destinasi gagal. Cuba lagi.');
+      const data = await response.json();
+      setDestinationResults(data.map(x => ({ label: x.display_name, lat: Number(x.lat), lng: Number(x.lon) })));
+      if (!data.length) setError('Destinasi tidak ditemui. Cuba carian lain.');
+    } catch (e) { setError(e.message || 'Carian destinasi gagal.'); }
+  };
+
   const submit = async () => {
     setBusy(true); setError('');
     try {
       if (!profile.hostelId) throw new Error('Profil belum mempunyai penempatan hostel.');
-      if (!destination.trim() || !reason.trim()) throw new Error('Destinasi dan sebab permohonan wajib diisi.');
-      if (endDate < startDate) throw new Error('Tarikh tamat tidak boleh lebih awal daripada tarikh mula.');
+      if (!destinationPin || !destination.trim() || !reason.trim()) throw new Error('Sila cari dan pilih destinasi pada peta serta isi sebab permohonan.');
+      if (endDate < startDate) throw new Error('Tarikh kembali tidak boleh lebih awal daripada tarikh keluar.');
+      if (!departureTime || !returnTime) throw new Error('Masa keluar dan masa kembali wajib diisi.');
       await addDoc(collection(db, 'hostelMovementRequests'), {
         studentUid: user.uid, studentName: profile.fullName || '', studentEmail: profile.email || user.email || '',
         hostelId: profile.hostelId, hostelName: profile.hostelName || '', room: profile.room || '',
-        type, startDate, endDate, destination: destination.trim(), reason: reason.trim(),
+        type, startDate, endDate, departureTime, returnTime, destination: destination.trim(), destinationLat: destinationPin.lat, destinationLng: destinationPin.lng, destinationAddress: destinationPin.label, durationDays: calculateDays(startDate, endDate), reason: reason.trim(),
         approvalStatus: 'pending', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
-      setDestination(''); setReason('');
+      setDestination(''); setDestinationPin(null); setDestinationSearch(''); setDestinationResults([]); setReason('');
       setNotice('Permohonan telah dihantar kepada Admin/Warden.');
     } catch (e) { setError(e.message || friendlyError(e)); }
     finally { setBusy(false); }
@@ -1722,10 +1759,24 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
         <p className="muted mt-1">Permohonan perlu diluluskan oleh Admin/Warden sebelum pengecualian curfew diberikan.</p>
         <label className="mt-3 block text-sm font-medium">Jenis permohonan<select className="field mt-1" value={type} onChange={e=>setType(e.target.value)}>{MOVEMENT_TYPES.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select></label>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="text-sm font-medium">Tarikh mula<input className="field mt-1" type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label>
-          <label className="text-sm font-medium">Tarikh tamat<input className="field mt-1" type="date" value={endDate} min={startDate} onChange={e=>setEndDate(e.target.value)}/></label>
+          <label className="text-sm font-medium">Tarikh Keluar<input className="field mt-1" type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label>
+          <label className="text-sm font-medium">Tarikh Kembali Semula ke Hostel<input className="field mt-1" type="date" value={endDate} min={startDate} onChange={e=>setEndDate(e.target.value)}/></label>
         </div>
-        <label className="mt-3 block text-sm font-medium">Destinasi<input className="field mt-1" value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Nyatakan destinasi"/></label>
+        <div className="mt-2 rounded-lg bg-teal-50 p-3 text-sm text-teal-900"><b>Jumlah tempoh permohonan: {calculateDays(startDate,endDate)} hari</b><p className="text-xs mt-1">Dikira termasuk Tarikh Keluar dan Tarikh Kembali.</p></div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-medium">Anggaran Masa Keluar<input className="field mt-1" type="time" value={departureTime} onChange={e=>setDepartureTime(e.target.value)}/></label>
+          <label className="text-sm font-medium">Anggaran Masa Kembali<input className="field mt-1" type="time" value={returnTime} onChange={e=>setReturnTime(e.target.value)}/></label>
+        </div>
+        <div className="mt-3">
+          <label className="block text-sm font-medium">Destinasi – cari lokasi dan pilih pin pada peta</label>
+          <div className="mt-1 flex gap-2">
+            <input className="field min-w-0 flex-1" value={destinationSearch} onChange={e=>setDestinationSearch(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')searchDestination()}} placeholder="Cari alamat, bandar atau tempat"/>
+            <button type="button" className="btn-secondary shrink-0" onClick={searchDestination}>Cari</button>
+          </div>
+          {destinationResults.length>0 && <div className="mt-2 max-h-36 overflow-auto rounded-lg border bg-white">{destinationResults.map((x,i)=><button type="button" key={i} className="block w-full border-b p-2 text-left text-xs hover:bg-slate-50" onClick={()=>{setDestinationPin(x);setDestination(x.label);setDestinationResults([])}}>{x.label}</button>)}</div>}
+          <MovementDestinationMap selected={destinationPin} onSelect={x=>{setDestinationPin(x);setDestination(x.label)}}/>
+          {destinationPin && <p className="mt-2 text-xs text-emerald-700">Pin destinasi dipilih: {destinationPin.label}</p>}
+        </div>
         <label className="mt-3 block text-sm font-medium">Sebab permohonan<textarea className="field mt-1 min-h-24" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Nyatakan sebab permohonan"/></label>
         <button className="btn-primary mt-4 w-full" disabled={busy} onClick={submit}>{busy?'Menghantar…':'Hantar Permohonan'}</button>
       </section>}
@@ -1733,8 +1784,8 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
         <h3 className="section-title">{profile.role === 'student' ? 'Sejarah Permohonan Saya' : 'Permohonan Pelajar'}</h3>
         {!rows.length ? <p className="muted mt-3">Tiada permohonan direkodkan.</p> : <div className="mt-3 space-y-3">
           {rows.map(row => <article key={row.id} className="rounded-xl border p-3">
-            <div className="flex flex-wrap items-start justify-between gap-2"><div><b>{row.type} · {row.studentName}</b><p className="text-xs text-slate-500">{row.hostelName || row.hostelId} · {row.startDate} hingga {row.endDate}</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">{row.approvalStatus?.toUpperCase()}</span></div>
-            <p className="mt-2 text-sm">Destinasi: {row.destination}</p><p className="text-sm">Sebab: {row.reason}</p>
+            <div className="flex flex-wrap items-start justify-between gap-2"><div><b>{row.type} · {row.studentName}</b><p className="text-xs text-slate-500">{row.hostelName || row.hostelId} · Keluar: {row.startDate} · Kembali: {row.endDate} · {row.durationDays || calculateDays(row.startDate,row.endDate)} hari</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">{row.approvalStatus?.toUpperCase()}</span></div>
+            <p className="mt-2 text-sm">Destinasi: {row.destinationAddress || row.destination}</p><p className="text-sm">Anggaran masa: Keluar {row.departureTime || '—'} · Kembali {row.returnTime || '—'}</p><p className="text-sm">Tempoh: {row.durationDays || calculateDays(row.startDate,row.endDate)} hari</p><p className="text-sm">Sebab: {row.reason}</p>
             {row.rejectionReason && <p className="mt-2 text-sm text-red-700">Sebab ditolak: {row.rejectionReason}</p>}
             {isAdmin && row.approvalStatus === 'pending' && <div className="mt-3 flex gap-2"><button className="btn-primary" disabled={busy} onClick={()=>decide(row,'approved')}>Luluskan</button><button className="btn-secondary" disabled={busy} onClick={()=>decide(row,'rejected')}>Tolak</button></div>}
           </article>)}
