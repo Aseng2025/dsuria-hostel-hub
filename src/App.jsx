@@ -1335,11 +1335,9 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
 
   useEffect(() => {
     if (profile.role !== 'student') return undefined;
-    let active = true;
-    getDoc(doc(db, 'studentProfiles', user.uid)).then(snap => {
-      if (active) setStudentProfile(snap.exists() ? snap.data() : null);
-    }).catch(e => { if (active) setError(friendlyError(e)); });
-    return () => { active = false; };
+    return onSnapshot(doc(db, 'studentProfiles', user.uid), snap => {
+      setStudentProfile(snap.exists() ? snap.data() : null);
+    }, e => setError(friendlyError(e)));
   }, [profile.role, user.uid]);
 
   useEffect(() => {
@@ -1710,7 +1708,9 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
   const submit = async () => {
     setBusy(true); setError('');
     try {
-      if (!studentProfile?.hostelId) throw new Error('Rekod penempatan hostel belum lengkap dalam profil pelajar. Sila hubungi Warden untuk semakan.');
+      if (!studentProfile) throw new Error('Rekod Student Registration belum ditemui. Sila lengkapkan pendaftaran pelajar terlebih dahulu.');
+      if (studentProfile.approvalStatus !== 'approved') throw new Error('Pendaftaran pelajar belum diluluskan. Permohonan keluar hanya boleh dibuat selepas Warden meluluskan pendaftaran.');
+      if (!studentProfile.hostelId || !studentProfile.room) throw new Error('Penempatan hostel atau nombor bilik belum lengkap dalam Student Registration. Sila semak dan simpan maklumat tersebut.');
       if (!destinationPin || !destination.trim() || !reason.trim()) throw new Error('Sila cari dan pilih destinasi pada peta serta isi sebab permohonan.');
       if (endDate < startDate) throw new Error('Tarikh kembali tidak boleh lebih awal daripada tarikh keluar.');
       if (!departureTime || !returnTime) throw new Error('Masa keluar dan masa kembali wajib diisi.');
@@ -1772,6 +1772,7 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
       {profile.role === 'student' && <section className="card">
         <h3 className="section-title">Permohonan Keluar / Cuti</h3>
         <p className="muted mt-1">Permohonan perlu diluluskan oleh Admin/Warden sebelum pengecualian curfew diberikan.</p>
+        {studentProfile && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">Status pendaftaran: <b>{studentProfile.approvalStatus || 'DRAFT'}</b> · Hostel: <b>{studentProfile.hostelName || 'Belum ditetapkan'}</b> · Bilik: <b>{studentProfile.room || '—'}</b></p>}
         <label className="mt-3 block text-sm font-medium">Jenis permohonan<select className="field mt-1" value={type} onChange={e=>setType(e.target.value)}>{MOVEMENT_TYPES.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select></label>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <label className="text-sm font-medium">Tarikh Keluar<input className="field mt-1" type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label>
