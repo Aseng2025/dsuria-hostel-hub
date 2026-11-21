@@ -1424,11 +1424,12 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
     if (!isSuper || !window.confirm('Arkibkan peraturan ini? Rekod pengesahan lama akan dikekalkan.')) return;
     setBusy(true); setError('');
     try {
+      const nextVersion = (Number(rule.version) || 1) + 1;
       await updateDoc(doc(db, 'hostelRules', rule.id), {
-        status: 'archived', updatedAt: serverTimestamp(), updatedBy: user.uid, updatedByEmail: profile.email || '',
+        status: 'archived', version: nextVersion, updatedAt: serverTimestamp(), updatedBy: user.uid, updatedByEmail: profile.email || '',
       });
       await addDoc(collection(db, 'hostelRuleAuditLogs'), {
-        ruleId: rule.id, ruleTitle: rule.title, action: 'RULE_ARCHIVED', version: rule.version || 1,
+        ruleId: rule.id, ruleTitle: rule.title, action: 'RULE_ARCHIVED', version: nextVersion,
         performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
       });
       setMessage('Peraturan diarkibkan. Sejarah pengesahan dikekalkan.');
