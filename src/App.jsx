@@ -472,62 +472,22 @@ function HomeDashboard({ profile, isSuper, onBack }) {
       return undefined;
     }
 
-    let approvedIds = [];
-    let activeHostels = [];
-    let approvedReady = false;
-    let hostelsReady = false;
-
-    const syncAssignedHostels = () => {
-      if (!approvedReady || !hostelsReady) return;
-
-      setAssignedHostels(
-        activeHostels.filter(hostel => approvedIds.includes(hostel.id))
-      );
+    const assignedIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
+    if (!assignedIds.length) {
+      setAssignedHostels([]);
       setHostelLoading(false);
-    };
-
-    const unsubscribeApproved = onSnapshot(
-      doc(db, 'approvedUsers', email),
-      snapshot => {
-        approvedIds =
-          snapshot.exists() && Array.isArray(snapshot.data().hostelIds)
-            ? snapshot.data().hostelIds
-            : [];
-        approvedReady = true;
-        syncAssignedHostels();
-      },
-      error => {
-        setHostelError(friendlyError(error));
-        setHostelLoading(false);
-      }
-    );
-
-    const activeHostelsQuery = query(
-      collection(db, 'hostels'),
-      where('status', '==', 'active')
-    );
-
-    const unsubscribeHostels = onSnapshot(
-      activeHostelsQuery,
-      snapshot => {
-        activeHostels = snapshot.docs.map(item => ({
-          id: item.id,
-          ...item.data(),
-        }));
-        hostelsReady = true;
-        syncAssignedHostels();
-      },
-      error => {
-        setHostelError(friendlyError(error));
-        setHostelLoading(false);
-      }
-    );
-
-    return () => {
-      unsubscribeApproved();
-      unsubscribeHostels();
-    };
-  }, [isSuper, profile.email, profile.role]);
+      return undefined;
+    }
+    const activeHostelsQuery = query(collection(db, 'hostels'), where('status', '==', 'active'));
+    return onSnapshot(activeHostelsQuery, snapshot => {
+      const activeHostels = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+      setAssignedHostels(activeHostels.filter(hostel => assignedIds.includes(hostel.id)));
+      setHostelLoading(false);
+    }, error => {
+      setHostelError(friendlyError(error));
+      setHostelLoading(false);
+    });
+  }, [isSuper, profile.role, profile.hostelIds]);
 
   return (
     <div className="space-y-5">
@@ -631,6 +591,8 @@ function HomeDashboard({ profile, isSuper, onBack }) {
 function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab = 'profile' }) {
   const [hostelIds, setHostelIds] = useState([]);
   const [hostels, setHostels] = useState([]);
+  const [peerAdmins, setPeerAdmins] = useState([]);
+  const [trashStudents, setTrashStudents] = useState([]);
   const [students, setStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [contacts, setContacts] = useState([]);
@@ -653,12 +615,9 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
       if (isSuper) setHostelIds(rows.map(h => h.id));
     }, e => setError(friendlyError(e)));
     if (isSuper) { setLoading(false); return stopHostels; }
-    const email = (profile.email || '').trim().toLowerCase();
-    const stopApproved = onSnapshot(doc(db, 'approvedUsers', email), snap => {
-      setHostelIds(snap.exists() && snap.data().status === 'active' ? (snap.data().hostelIds || []) : []);
-      setLoading(false);
-    }, e => { setError(friendlyError(e)); setLoading(false); });
-    return () => { stopApproved(); stopHostels(); };
+    setHostelIds(Array.isArray(profile.hostelIds) ? profile.hostelIds : []);
+    setLoading(false);
+    return () => { stopHostels(); };
   }, [profile.email, isSuper]);
 
   useEffect(() => {
@@ -674,11 +633,29 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
   }, [hostelIds, isSuper]);
 
   useEffect(() => {
+    if (isSuper || !hostelIds.length || hostelIds.length > 30) { setPeerAdmins([]); return undefined; }
+    const adminsQuery = query(collection(db, 'approvedUsers'),
+      where('role', '==', 'admin'), where('status', '==', 'active'),
+      where('hostelIds', 'array-contains-any', hostelIds));
+    return onSnapshot(adminsQuery, snapshot => setPeerAdmins(snapshot.docs.map(item => ({email:item.id,...item.data()}))),
+      error => setError(friendlyError(error)));
+  }, [isSuper, hostelIds]);
+
+  useEffect(() => {
     const q = isSuper ? collection(db,'studentActivityLogs')
       : hostelIds.length && hostelIds.length <= 30 ? query(collection(db,'studentActivityLogs'),where('hostelId','in',hostelIds)) : null;
     if (!q) { setAllLogs([]); return undefined; }
     return onSnapshot(q,snap=>setAllLogs(snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),e=>setError(friendlyError(e)));
   },[isSuper,hostelIds]);
+
+  useEffect(() => {
+    if (!isSuper) { setTrashStudents([]); return undefined; }
+    return onSnapshot(collection(db, 'deletedStudentProfiles'), snapshot => {
+      const rows=snapshot.docs.map(item=>({uid:item.id,...item.data()}));
+      rows.sort((a,b)=>(b.deletedAt?.seconds||0)-(a.deletedAt?.seconds||0));
+      setTrashStudents(rows);
+    }, error=>setError(friendlyError(error)));
+  }, [isSuper]);
 
   useEffect(() => {
     if (!selectedStudent) { setContacts([]); setLogs([]); setEditForm(null); return undefined; }
@@ -756,16 +733,31 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
   };
 
   const removeStudent = async student => {
-    if (!isSuper || !window.confirm('Padam rekod profil pelajar ini? Audit Log tidak akan dipadam.')) return;
-    setBusy(true);
+    if (!isSuper || !window.confirm('Pindahkan profil pelajar ke Trash? Rekod boleh dipulihkan.')) return;
+    setBusy(true); setError('');
     try {
       const batch=writeBatch(db);
+      batch.set(doc(db,'deletedStudentProfiles',student.uid),{...student,deletedAt:serverTimestamp(),deletedBy:user.uid,deletedByEmail:profile.email||''});
       batch.delete(doc(db,'studentProfiles',student.uid));
       const logRef=doc(collection(db,'studentActivityLogs'));
-      batch.set(logRef,{studentUid:student.uid,studentEmail:student.email||'',hostelId:student.hostelId||'',action:'PROFILE_DELETED',details:{},performedBy:user.uid,performedByEmail:profile.email||'',createdAt:serverTimestamp()});
+      batch.set(logRef,{studentUid:student.uid,studentEmail:student.email||'',hostelId:student.hostelId||'',action:'PROFILE_MOVED_TO_TRASH',details:{},performedBy:user.uid,performedByEmail:profile.email||'',createdAt:serverTimestamp()});
       await batch.commit();
-      await deleteDoc(doc(db,'emergencyContacts',student.uid)).catch(()=>{});
-      setSelectedStudent(null); setNotice('Profil pelajar dipadam. Audit Log dikekalkan.');
+      setSelectedStudent(null); setNotice('Profil dipindahkan ke Trash. Emergency Contact dikekalkan.');
+    } catch(e) { setError(friendlyError(e)); } finally { setBusy(false); }
+  };
+  const restoreStudent = async student => {
+    if (!isSuper || !window.confirm('Pulihkan profil pelajar ini?')) return;
+    setBusy(true); setError('');
+    try {
+      const trashRef=doc(db,'deletedStudentProfiles',student.uid), snap=await getDoc(trashRef);
+      if (!snap.exists()) throw new Error('Rekod Trash tidak ditemui.');
+      const {deletedAt,deletedBy,deletedByEmail,...profileData}=snap.data();
+      const batch=writeBatch(db);
+      batch.set(doc(db,'studentProfiles',student.uid),profileData);
+      batch.delete(trashRef);
+      const logRef=doc(collection(db,'studentActivityLogs'));
+      batch.set(logRef,{studentUid:student.uid,studentEmail:student.email||'',hostelId:student.hostelId||'',action:'PROFILE_RESTORED',details:{},performedBy:user.uid,performedByEmail:profile.email||'',createdAt:serverTimestamp()});
+      await batch.commit(); setNotice('Profil pelajar berjaya dipulihkan.');
     } catch(e) { setError(friendlyError(e)); } finally { setBusy(false); }
   };
 
@@ -777,6 +769,14 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
     <section className="grid gap-3 sm:grid-cols-4">
       {[['Jumlah pelajar',students.length],['Menunggu',pending],['Diluluskan',approved],['Ditolak',rejected]].map(([label,value])=><div className="card" key={label}><p className="muted">{label}</p><p className="mt-2 text-3xl font-bold text-navy">{loading?'…':value}</p></div>)}
     </section>
+    {!isSuper && <section className="card">
+      <h3 className="section-title">Senarai Admin / Warden Hostel Sama ({peerAdmins.length})</h3>
+      <p className="muted mt-1">Admin yang berkongsi sekurang-kurangnya satu hostel dengan akaun anda.</p>
+      {peerAdmins.length ? peerAdmins.map(item => {
+        const names=(item.hostelIds||[]).filter(id=>hostelIds.includes(id)).map(id=>hostels.find(h=>h.id===id)?.name||id);
+        return <div key={item.email} className="border-b py-3"><b>{item.email}</b><p className="text-xs text-slate-500">Hostel bersama: {names.join(', ')}</p></div>;
+      }) : <p className="muted mt-3">Tiada Admin lain yang berkongsi hostel ini.</p>}
+    </section>}
     <section className="card">
       <div className="flex flex-wrap justify-between gap-2"><div><h3 className="section-title">{initialTab==='emergency'?'Emergency Contact Pelajar':'Student Management'}</h3><p className="muted mt-1">{isSuper?'Akses penuh semua hostel.':'Rekod terhad kepada hostel yang ditugaskan.'}</p></div><span className="text-xs text-slate-500">{hostelIds.length} hostel dalam skop</span></div>
       {error&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}{message&&<p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
@@ -785,7 +785,15 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
       {filtered.length===0&&<p className="muted mt-4">Tiada rekod pelajar ditemui.</p>}
     </section>
 <section className="card"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="section-title flex items-center gap-2"><History size={18}/> Student Activity Log</h3>{isSuper&&<button className="btn-secondary" onClick={()=>{const rows=[["Tarikh","Pelajar","Tindakan","Pelaksana","Butiran"],...allLogs.map(log=>[log.createdAt?.toDate?.().toISOString()||"",log.studentEmail||log.studentUid,log.action,log.performedByEmail,JSON.stringify(log.details||{})])];const csv=rows.map(row=>row.map(value=>`"${String(value).replace(/"/g,'""')}"`).join(",")).join("\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="student-activity-log.csv";a.click();URL.revokeObjectURL(url);}}>Eksport CSV</button>}</div>{allLogs.length===0?<p className="muted mt-3">Tiada aktiviti direkodkan.</p>:allLogs.slice(0,100).map(log=><div key={log.id} className="border-b py-2 text-sm"><b>{log.action}</b><p>{log.studentEmail||log.studentUid}</p><p className="text-xs text-slate-500">{log.performedByEmail} · {log.createdAt?.toDate?.().toLocaleString("ms-MY")||"Masa tidak tersedia"}</p></div>)}</section>
-    {selectedStudent&&<section className="card space-y-4">
+         {isSuper && <section className="card">
+       <h3 className="section-title">Trash / Recycle Bin ({trashStudents.length})</h3>
+       <p className="muted mt-1">Profil Soft Delete. Restore mengembalikan profil; Emergency Contact dan sejarah aktiviti dikekalkan.</p>
+       {trashStudents.length ? trashStudents.map(st=><div key={st.uid} className="border-b py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+         <div><b>{st.fullName||'Nama belum diisi'}</b><p className="text-xs text-slate-500">{st.email} · {st.hostelName||'—'} · Dipadam oleh {st.deletedByEmail||'Super Admin'}</p></div>
+         <button className="btn-primary" disabled={busy} onClick={()=>restoreStudent(st)}>Restore</button>
+       </div>) : <p className="muted mt-3">Trash kosong.</p>}
+     </section>}
+{selectedStudent&&<section className="card space-y-4">
       <div className="flex justify-between gap-2"><h3 className="section-title">Butiran Pelajar: {selectedStudent.fullName}</h3><button className="btn-secondary" onClick={()=>setSelectedStudent(null)}>Tutup</button></div>
       <div className="grid gap-3 sm:grid-cols-2">
         {['fullName','phone','programme','hostelId','room'].map(key=><label className="text-sm font-medium capitalize" key={key}>{key==='hostelId'?'Hostel':key}{key==='hostelId'?<select className="field mt-1" value={editForm?.hostelId||''} onChange={e=>setEditForm(f=>({...f,hostelId:e.target.value,hostelName:hostels.find(h=>h.id===e.target.value)?.name||''}))}><option value="">Pilih hostel</option>{editForm?.hostelId&&!hostels.some(h=>h.id===editForm.hostelId)&&<option value={editForm.hostelId}>{editForm.hostelName||'Hostel tidak aktif / tiada dalam senarai'}</option>}{hostels.map(h=><option key={h.id} value={h.id}>{h.name}</option>)}</select>:<input className="field mt-1" value={editForm?.[key]||''} onChange={e=>setEditForm(f=>({...f,[key]:e.target.value}))}/>}</label>)}
