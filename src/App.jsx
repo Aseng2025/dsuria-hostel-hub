@@ -688,7 +688,8 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
       setContacts(rows);
       setEditContacts([0,1].map(i => ({ ...emptyContact(), ...(rows[i] || {}) })));
     }, e => setError(friendlyError(e)));
-    const stopLogs = onSnapshot(query(collection(db, 'studentActivityLogs'), where('studentUid', '==', selectedStudent.uid)), snap => {
+    const logsQuery = isSuper ? query(collection(db, 'studentActivityLogs'), where('studentUid', '==', selectedStudent.uid)) : query(collection(db, 'studentActivityLogs'), where('studentUid', '==', selectedStudent.uid), where('hostelId', 'in', hostelIds));
+    const stopLogs = onSnapshot(logsQuery, snap => {
       const rows = snap.docs.map(d => ({ id:d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds || 0)-(a.createdAt?.seconds || 0));
       setLogs(rows);
     }, e => setError(friendlyError(e)));
