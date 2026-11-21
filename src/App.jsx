@@ -442,24 +442,32 @@ function HomeDashboard({ profile, isSuper, onBack }) {
       setSummaryLoading(false);
       return undefined;
     }
-    if (ids.length > 30) {
-      setSummaryLoading(false);
-      return undefined;
-    }
-    const q = query(collection(db, 'studentProfiles'), where('hostelId', 'in', ids));
-    return onSnapshot(q, snapshot => {
-      const rows = snapshot.docs.map(item => item.data());
+    let active = true;
+    const unsubs = [];
+    const rowsByHostel = new Map();
+    const refreshSummary = () => {
+      if (!active) return;
+      const rows = Array.from(rowsByHostel.values()).flat();
       setStudentSummary({
         total: rows.length,
-        pending: rows.filter(row => !row.approvalStatus || row.approvalStatus === 'pending').length,
+        pending: rows.filter(row => !row.approvalStatus || row.approvalStatus === 'pending' || row.approvalStatus === 'draft').length,
         approved: rows.filter(row => row.approvalStatus === 'approved').length,
         rejected: rows.filter(row => row.approvalStatus === 'rejected').length,
       });
       setSummaryLoading(false);
-    }, error => {
-      setSummaryError(friendlyError(error));
-      setSummaryLoading(false);
+    };
+    ids.forEach(hostelId => {
+      const hostelQuery = query(collection(db, 'studentProfiles'), where('hostelId', '==', hostelId));
+      unsubs.push(onSnapshot(hostelQuery, snapshot => {
+        rowsByHostel.set(hostelId, snapshot.docs.map(item => ({ uid: item.id, ...item.data() })));
+        refreshSummary();
+      }, error => {
+        if (!active) return;
+        setSummaryError(friendlyError(error));
+        setSummaryLoading(false);
+      }));
     });
+    return () => { active = false; unsubs.forEach(stop => stop()); };
   }, [isSuper, profile.role, profile.hostelIds]);
 
   useEffect(() => {
@@ -625,15 +633,32 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
   }, [profile.email, isSuper]);
 
   useEffect(() => {
-    const q = isSuper ? collection(db, 'studentProfiles')
-      : hostelIds.length && hostelIds.length <= 30 ? query(collection(db, 'studentProfiles'), where('hostelId', 'in', hostelIds)) : null;
-    if (!q) { setStudents([]); setLoading(false); return undefined; }
+    if (isSuper) {
+      setLoading(true);
+      return onSnapshot(collection(db, 'studentProfiles'), snap => {
+        const rows = snap.docs.map(d => ({ uid: d.id, ...d.data(), approvalStatus: d.data().approvalStatus || 'draft' }));
+        rows.sort((a,b) => (a.fullName || '').localeCompare(b.fullName || ''));
+        setStudents(rows); setLoading(false);
+      }, e => { setError(friendlyError(e)); setLoading(false); });
+    }
+    if (!hostelIds.length || hostelIds.length > 30) {
+      setStudents([]); setLoading(false); return undefined;
+    }
     setLoading(true);
-    return onSnapshot(q, snap => {
-      const rows = snap.docs.map(d => ({ uid: d.id, ...d.data(), approvalStatus: d.data().approvalStatus || 'draft' }));
-      rows.sort((a,b) => (a.fullName || '').localeCompare(b.fullName || ''));
-      setStudents(rows); setLoading(false);
-    }, e => { setError(friendlyError(e)); setLoading(false); });
+    let active = true;
+    const rowsByHostel = new Map();
+    const unsubs = hostelIds.map(hostelId => onSnapshot(
+      query(collection(db, 'studentProfiles'), where('hostelId', '==', hostelId)),
+      snap => {
+        rowsByHostel.set(hostelId, snap.docs.map(d => ({ uid: d.id, ...d.data(), approvalStatus: d.data().approvalStatus || 'draft' })));
+        if (!active) return;
+        const rows = Array.from(rowsByHostel.values()).flat();
+        rows.sort((a,b) => (a.fullName || '').localeCompare(b.fullName || ''));
+        setStudents(rows); setLoading(false);
+      },
+      e => { if (active) { setError(friendlyError(e)); setLoading(false); } }
+    ));
+    return () => { active = false; unsubs.forEach(stop => stop()); };
   }, [hostelIds, isSuper]);
 
   useEffect(() => {
