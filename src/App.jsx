@@ -1333,6 +1333,11 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
     : period === 'weekly'
       ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
       : date;
+  const rangeStart = period === 'monthly'
+    ? date.slice(0, 7) + '-01'
+    : period === 'weekly'
+      ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
+      : date;
 
   useEffect(() => {
     const rulesQuery = profile.role === 'student'
@@ -1657,7 +1662,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         studentMap.set('all', snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(x => x.approvalStatus === 'approved'));
         publish();
       }, e => setError(friendlyError(e))));
-      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('date', '==', date)), snap => {
+      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('date', '>=', rangeStart), where('date', '<=', date)), snap => {
         statusMap.set('all', snap.docs.map(d => ({ id: d.id, ...d.data() })));
         publish();
       }, e => setError(friendlyError(e))));
