@@ -1316,6 +1316,7 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
   const [myAcks, setMyAcks] = useState([]);
   const [students, setStudents] = useState([]);
   const [acks, setAcks] = useState([]);
+  const [ruleLogs, setRuleLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1338,6 +1339,15 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
       setLoading(false);
     }, e => { setError(friendlyError(e)); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    if (!isSuper) { setRuleLogs([]); return undefined; }
+    return onSnapshot(collection(db, 'hostelRuleAuditLogs'), snapshot => {
+      const rows=snapshot.docs.map(item=>({id:item.id,...item.data()}));
+      rows.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      setRuleLogs(rows);
+    }, e=>setError(friendlyError(e)));
+  }, [isSuper]);
 
   useEffect(() => {
     if (profile.role !== 'student') { setMyAcks([]); return undefined; }
@@ -1403,6 +1413,7 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
         });
         await addDoc(collection(db, 'hostelRuleAuditLogs'), {
           ruleId: editing.id, ruleTitle: title.trim(), action: 'RULE_UPDATED', version: nextVersion,
+          category, content: content.trim(), effectiveDate, previousTitle: editing.title, previousContent: editing.content,
           performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
         });
         setMessage('Peraturan dikemas kini. Semua pelajar perlu membuat pengesahan semula bagi versi baharu.');
@@ -1415,6 +1426,7 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
         });
         await addDoc(collection(db, 'hostelRuleAuditLogs'), {
           ruleId: ref.id, ruleTitle: title.trim(), action: 'RULE_CREATED', version: 1,
+          category, content: content.trim(), effectiveDate,
           performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
         });
         setMessage('Peraturan baharu berjaya diterbitkan.');
@@ -1433,6 +1445,7 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
       });
       await addDoc(collection(db, 'hostelRuleAuditLogs'), {
         ruleId: rule.id, ruleTitle: rule.title, action: 'RULE_ARCHIVED', version: nextVersion,
+        category: rule.category, content: rule.content, effectiveDate: rule.effectiveDate,
         performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
       });
       setMessage('Peraturan diarkibkan. Sejarah pengesahan dikekalkan.');
@@ -1449,6 +1462,7 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
       });
       await addDoc(collection(db, 'hostelRuleAuditLogs'), {
         ruleId: rule.id, ruleTitle: rule.title, action: 'RULE_REACTIVATED', version,
+        category: rule.category, content: rule.content, effectiveDate: rule.effectiveDate,
         performedBy: user.uid, performedByEmail: profile.email || '', createdAt: serverTimestamp(),
       });
       setMessage('Peraturan diaktifkan semula. Pengesahan baharu diperlukan untuk versi terkini.');
@@ -1551,6 +1565,15 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
             {!rules.length && <p className="muted">Belum ada peraturan diterbitkan.</p>}
           </div>
           {archivedRules.length > 0 && <p className="mt-3 text-xs text-slate-500">{archivedRules.length} peraturan diarkibkan; rekod pengesahan lama masih disimpan.</p>}
+          <section className="mt-6 border-t pt-5">
+            <h4 className="font-semibold text-navy">Sejarah Perubahan Peraturan</h4>
+            {ruleLogs.length ? <div className="mt-3 space-y-3">{ruleLogs.map(log=><article key={log.id} className="rounded-lg border p-3 text-sm">
+              <div className="flex flex-wrap justify-between gap-2"><b>{log.ruleTitle}</b><span className="text-xs text-slate-500">Versi {log.version || '—'} · {log.action}</span></div>
+              <p className="mt-1 text-xs text-slate-500">Oleh {log.performedByEmail || log.performedBy || '—'} · {log.createdAt?.toDate ? log.createdAt.toDate().toLocaleString('ms-MY') : '—'}</p>
+              {log.previousTitle && <p className="mt-2 text-xs text-slate-600">Tajuk sebelumnya: {log.previousTitle}</p>}
+              {log.content && <details className="mt-2"><summary className="cursor-pointer text-teal">Lihat kandungan versi ini</summary><p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{log.content}</p></details>}
+            </article>)}</div> : <p className="muted mt-2">Belum ada sejarah perubahan.</p>}
+          </section>
         </section>
       )}
     </div>
