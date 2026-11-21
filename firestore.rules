@@ -420,7 +420,7 @@ service cloud.firestore {
         && request.resource.data.effectiveDate is string
         && request.resource.data.status in ['active','archived']
         && request.resource.data.version is int
-        && request.resource.data.version >= resource.data.version
+        && request.resource.data.version == resource.data.version + 1
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid;
@@ -438,8 +438,10 @@ service cloud.firestore {
         ])
         && request.resource.data.studentUid == request.auth.uid
         && request.resource.data.studentEmail == request.auth.token.email
+        && request.resource.data.ruleId is string
         && request.resource.data.version is int
         && request.resource.data.hostelId is string
+        && ackId == request.resource.data.ruleId + '_' + request.auth.uid + '_v' + string(request.resource.data.version)
         && exists(/databases/$(database)/documents/hostelRules/$(request.resource.data.ruleId))
         && get(/databases/$(database)/documents/hostelRules/$(request.resource.data.ruleId)).data.status == 'active'
         && get(/databases/$(database)/documents/hostelRules/$(request.resource.data.ruleId)).data.version == request.resource.data.version
