@@ -414,6 +414,80 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
 }
 
 function HomeDashboard({ profile, isSuper, onBack }) {
+  const [assignedHostels, setAssignedHostels] = useState([]);
+  const [hostelLoading, setHostelLoading] = useState(
+    !isSuper && profile.role === 'admin'
+  );
+  const [hostelError, setHostelError] = useState('');
+
+  useEffect(() => {
+    if (isSuper || profile.role !== 'admin') return undefined;
+
+    const email = (profile.email || '').trim().toLowerCase();
+
+    if (!email) {
+      setHostelError('Emel akaun tidak dapat dikenal pasti.');
+      setHostelLoading(false);
+      return undefined;
+    }
+
+    let approvedIds = [];
+    let activeHostels = [];
+    let approvedReady = false;
+    let hostelsReady = false;
+
+    const syncAssignedHostels = () => {
+      if (!approvedReady || !hostelsReady) return;
+
+      setAssignedHostels(
+        activeHostels.filter(hostel => approvedIds.includes(hostel.id))
+      );
+      setHostelLoading(false);
+    };
+
+    const unsubscribeApproved = onSnapshot(
+      doc(db, 'approvedUsers', email),
+      snapshot => {
+        approvedIds =
+          snapshot.exists() && Array.isArray(snapshot.data().hostelIds)
+            ? snapshot.data().hostelIds
+            : [];
+        approvedReady = true;
+        syncAssignedHostels();
+      },
+      error => {
+        setHostelError(friendlyError(error));
+        setHostelLoading(false);
+      }
+    );
+
+    const activeHostelsQuery = query(
+      collection(db, 'hostels'),
+      where('status', '==', 'active')
+    );
+
+    const unsubscribeHostels = onSnapshot(
+      activeHostelsQuery,
+      snapshot => {
+        activeHostels = snapshot.docs.map(item => ({
+          id: item.id,
+          ...item.data(),
+        }));
+        hostelsReady = true;
+        syncAssignedHostels();
+      },
+      error => {
+        setHostelError(friendlyError(error));
+        setHostelLoading(false);
+      }
+    );
+
+    return () => {
+      unsubscribeApproved();
+      unsubscribeHostels();
+    };
+  }, [isSuper, profile.email, profile.role]);
+
   return (
     <div className="space-y-5">
       <section className="card">
@@ -441,6 +515,41 @@ function HomeDashboard({ profile, isSuper, onBack }) {
           </div>
         </div>
       </section>
+
+      {profile.role === 'admin' && !isSuper && (
+        <section className="card">
+          <div className="flex items-center gap-2">
+            <MapPin className="text-teal" size={20} />
+            <h4 className="font-semibold text-navy">Hostel Penempatan</h4>
+          </div>
+
+          {hostelLoading ? (
+            <p className="muted mt-3">Memuatkan maklumat penempatan hostel…</p>
+          ) : hostelError ? (
+            <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+              {hostelError}
+            </p>
+          ) : assignedHostels.length > 0 ? (
+            <ul className="mt-3 space-y-2">
+              {assignedHostels.map(hostel => (
+                <li
+                  key={hostel.id}
+                  className="rounded-xl bg-teal/5 px-4 py-3 font-medium text-navy"
+                >
+                  {hostel.name || 'Nama hostel tidak tersedia'}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+              Tiada hostel aktif ditetapkan untuk akaun ini. Sila hubungi Super Admin.
+            </p>
+          )}
+          <p className="muted mt-3 text-xs">
+            Paparan ini menunjukkan hostel aktif yang telah ditetapkan kepada akaun Admin/Warden.
+          </p>
+        </section>
+      )}
 
       <section className="card">
         <h4 className="font-semibold text-navy">Makluman</h4>
