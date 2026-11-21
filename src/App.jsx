@@ -1729,6 +1729,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
   const docId = user.uid + '_' + today;
   const [status, setStatus] = useState('AT HOSTEL');
   const [record, setRecord] = useState(null);
+  const [approvedMovement, setApprovedMovement] = useState(null);
   const [students, setStudents] = useState([]);
   const [records, setRecords] = useState([]);
   const [date, setDate] = useState(today);
@@ -1743,6 +1744,13 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
     : period === 'weekly'
       ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
       : date;
+
+  useEffect(() => {
+    if (profile.role !== 'student') return undefined;
+    return onSnapshot(doc(db, 'dailyMovementApprovals', docId), snap => {
+      setApprovedMovement(snap.exists() ? snap.data() : null);
+    }, e => setError(friendlyError(e)));
+  }, [profile.role, docId]);
 
   useEffect(() => {
     if (profile.role !== 'student') return undefined;
@@ -1803,6 +1811,10 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
       });
       const distance = geoDistance(gps.lat, gps.lng, DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng);
       const verified = distance <= DAILY_GEOFENCE.radius;
+      const approvedTypes = approvedMovement?.type ? [approvedMovement.type] : [];
+      if (!verified && status !== 'AT HOSTEL' && !approvedTypes.includes(status)) {
+        throw new Error('Status ' + status + ' memerlukan kelulusan aktif daripada Admin/Warden.');
+      }
       const finalStatus = verified ? 'AT HOSTEL' : (status === 'AT HOSTEL' ? 'NOT VERIFIED' : status);
       const previous = record;
       await setDoc(doc(db, 'dailyStudentStatuses', docId), {
@@ -1859,12 +1871,13 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         {loading ? <p className="muted mt-3">Memuatkan status…</p> : <>
           <label className="mt-4 block text-sm font-medium">Status keberadaan
             <select className="field mt-1" value={status} onChange={e => setStatus(e.target.value)}>
-              {DAILY_STATUS_OPTIONS.map(item => <option key={item} value={item}>{item}</option>)}
+              {['AT HOSTEL', ...(approvedMovement?.type ? [approvedMovement.type] : [])].map(item => <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
           <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm">
             <p><b>Status hari ini:</b> {record?.status || 'Belum dikemas kini'}</p>
             <p><b>GPS:</b> {record?.locationVerified ? 'Disahkan dalam radius 100m' : 'Belum disahkan dalam radius 100m'}</p>
+            {approvedMovement && <p><b>Kelulusan aktif:</b> {approvedMovement.type} ({approvedMovement.startDate} hingga {approvedMovement.endDate})</p>}
             <p><b>Lokasi terakhir:</b> {record?.lastLocationAt?.toDate ? record.lastLocationAt.toDate().toLocaleString('ms-MY') : '—'}</p>
             {record?.distanceFromHostel != null && <p><b>Jarak:</b> {record.distanceFromHostel} meter</p>}
           </div>
