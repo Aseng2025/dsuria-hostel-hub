@@ -387,17 +387,18 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
             setNotice={setNotice}
             initialTab={id}
           />
-        ) : profile.role === 'admin' ? (
+        ) : profile.role === 'admin' || isSuper ? (
           <AdminWorkspace
             user={user}
             profile={profile}
+            isSuper={isSuper}
             setNotice={setNotice}
             initialTab={id}
           />
         ) : (
           <section className="card">
             <p className="font-medium text-navy">
-              Super Admin boleh mengurus akses pengguna melalui Admin Management.
+              Akses modul ini tidak dibenarkan.
             </p>
           </section>
         )
@@ -624,7 +625,7 @@ function HomeDashboard({ profile, isSuper, onBack }) {
   )
 }
 
-function AdminWorkspace({ user, profile, setNotice, initialTab = 'profile' }) {
+function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab = 'profile' }) {
   const [hostelIds, setHostelIds] = useState([]);
   const [hostels, setHostels] = useState([]);
   const [students, setStudents] = useState([]);
@@ -638,22 +639,35 @@ function AdminWorkspace({ user, profile, setNotice, initialTab = 'profile' }) {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const email = (profile.email || '').trim().toLowerCase();
-    if (!email) {
-      setError('Emel akaun tidak dapat dikenal pasti.');
+    setLoading(true);
+    setError('');
+
+    const studentsQuery = isSuper
+      ? collection(db, 'studentProfiles')
+      : hostelIds.length > 0 && hostelIds.length <= 30
+        ? query(collection(db, 'studentProfiles'), where('hostelId', 'in', hostelIds))
+        : null;
+
+    if (!studentsQuery) {
+      setStudents([]);
       setLoading(false);
+      if (!isSuper && hostelIds.length > 30) {
+        setError('Penempatan melebihi had carian sistem. Hubungi Super Admin.');
+      }
       return undefined;
     }
 
-    const stopApproved = onSnapshot(
-      doc(db, 'approvedUsers', email),
+    const stopStudents = onSnapshot(
+      studentsQuery,
       snapshot => {
-        if (!snapshot.exists() || snapshot.data().status !== 'active') {
-          setError('Akses Admin tidak aktif. Sila hubungi Super Admin.');
-          setLoading(false);
-          return;
-        }
-        setHostelIds(Array.isArray(snapshot.data().hostelIds) ? snapshot.data().hostelIds : []);
+        const rows = snapshot.docs.map(item => ({
+          uid: item.id,
+          ...item.data(),
+          approvalStatus: item.data().approvalStatus || 'pending',
+        }));
+        rows.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
+        setStudents(rows);
+        setLoading(false);
       },
       e => {
         setError(friendlyError(e));
@@ -661,17 +675,8 @@ function AdminWorkspace({ user, profile, setNotice, initialTab = 'profile' }) {
       }
     );
 
-    const stopHostels = onSnapshot(
-      query(collection(db, 'hostels'), where('status', '==', 'active')),
-      snapshot => setHostels(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))),
-      e => setError(friendlyError(e))
-    );
-
-    return () => {
-      stopApproved();
-      stopHostels();
-    };
-  }, [profile.email]);
+    return stopStudents;
+  }, [hostelIds, isSuper]);
 
   useEffect(() => {
     if (hostelIds.length === 0) {
@@ -787,7 +792,7 @@ function AdminWorkspace({ user, profile, setNotice, initialTab = 'profile' }) {
   const rejected = students.filter(item => item.approvalStatus === 'rejected').length;
 
   if (loading && students.length === 0) {
-    return <section className="card">Memuatkan rekod pelajar mengikut hostel penempatan…</section>;
+    return <section className="card">Memuatkan rekod pelajar…</section>;
   }
 
   return (
@@ -813,10 +818,10 @@ function AdminWorkspace({ user, profile, setNotice, initialTab = 'profile' }) {
             <h3 className="section-title">
               {initialTab === 'emergency' ? 'Emergency Contact Pelajar' : 'Student Management'}
             </h3>
-            <p className="muted mt-1">Rekod terhad kepada hostel yang ditugaskan kepada akaun anda.</p>
+            <p className="muted mt-1">{isSuper ? 'Akses penuh: rekod pelajar daripada semua hostel.' : 'Rekod terhad kepada hostel yang ditugaskan kepada akaun anda.'}</p>
           </div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-            {hostelIds.length} hostel ditugaskan
+            {isSuper ? hostels.length + ' hostel dalam sistem' : hostelIds.length + ' hostel ditugaskan'}
           </span>
         </div>
 
