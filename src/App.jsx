@@ -387,10 +387,17 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
             setNotice={setNotice}
             initialTab={id}
           />
+        ) : profile.role === 'admin' ? (
+          <AdminWorkspace
+            user={user}
+            profile={profile}
+            setNotice={setNotice}
+            initialTab={id}
+          />
         ) : (
           <section className="card">
             <p className="font-medium text-navy">
-              Paparan pengurusan profil pelajar akan dibangunkan dalam peringkat seterusnya.
+              Super Admin boleh mengurus akses pengguna melalui Admin Management.
             </p>
           </section>
         )
@@ -567,6 +574,316 @@ function HomeDashboard({ profile, isSuper, onBack }) {
       </section>
     </div>
   )
+}
+
+function AdminWorkspace({ user, profile, setNotice, initialTab = 'profile' }) {
+  const [hostelIds, setHostelIds] = useState([]);
+  const [hostels, setHostels] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [contacts, setContacts] = useState(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    const email = (profile.email || '').trim().toLowerCase();
+    if (!email) {
+      setError('Emel akaun tidak dapat dikenal pasti.');
+      setLoading(false);
+      return undefined;
+    }
+
+    const stopApproved = onSnapshot(
+      doc(db, 'approvedUsers', email),
+      snapshot => {
+        if (!snapshot.exists() || snapshot.data().status !== 'active') {
+          setError('Akses Admin tidak aktif. Sila hubungi Super Admin.');
+          setLoading(false);
+          return;
+        }
+        setHostelIds(Array.isArray(snapshot.data().hostelIds) ? snapshot.data().hostelIds : []);
+      },
+      e => {
+        setError(friendlyError(e));
+        setLoading(false);
+      }
+    );
+
+    const stopHostels = onSnapshot(
+      query(collection(db, 'hostels'), where('status', '==', 'active')),
+      snapshot => setHostels(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))),
+      e => setError(friendlyError(e))
+    );
+
+    return () => {
+      stopApproved();
+      stopHostels();
+    };
+  }, [profile.email]);
+
+  useEffect(() => {
+    if (hostelIds.length === 0) {
+      setStudents([]);
+      setLoading(false);
+      return undefined;
+    }
+
+    if (hostelIds.length > 30) {
+      setError('Penempatan melebihi had carian sistem. Hubungi Super Admin.');
+      setLoading(false);
+      return undefined;
+    }
+
+    setLoading(true);
+    const studentsQuery = query(
+      collection(db, 'studentProfiles'),
+      where('hostelId', 'in', hostelIds)
+    );
+
+    const stopStudents = onSnapshot(
+      studentsQuery,
+      snapshot => {
+        const rows = snapshot.docs.map(item => ({
+          uid: item.id,
+          ...item.data(),
+          approvalStatus: item.data().approvalStatus || 'pending',
+        }));
+        rows.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
+        setStudents(rows);
+        setLoading(false);
+      },
+      e => {
+        setError(friendlyError(e));
+        setLoading(false);
+      }
+    );
+
+    return stopStudents;
+  }, [hostelIds]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadContacts() {
+      if (!selectedStudent || initialTab !== 'emergency') {
+        setContacts(null);
+        return;
+      }
+      try {
+        const snap = await getDoc(doc(db, 'emergencyContacts', selectedStudent.uid));
+        if (active) setContacts(snap.exists() ? snap.data().contacts || [] : []);
+      } catch (e) {
+        if (active) setError(friendlyError(e));
+      }
+    }
+    loadContacts();
+    return () => { active = false; };
+  }, [selectedStudent, initialTab]);
+
+  const filteredStudents = students.filter(student => {
+    const term = search.trim().toLowerCase();
+    const matchesSearch = !term ||
+      (student.fullName || '').toLowerCase().includes(term) ||
+      (student.email || '').toLowerCase().includes(term) ||
+      (student.phone || '').toLowerCase().includes(term) ||
+      (student.room || '').toLowerCase().includes(term);
+    const matchesStatus = statusFilter === 'all' || student.approvalStatus === statusFilter;
+    const matchesTab = initialTab !== 'emergency' || true;
+    return matchesSearch && matchesStatus && matchesTab;
+  });
+
+  const updateApproval = async (student, status) => {
+    if (!student?.uid) return;
+    if (status === 'rejected' && !window.confirm('Tolak pendaftaran pelajar ini?')) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await updateDoc(doc(db, 'studentProfiles', student.uid), {
+        approvalStatus: status,
+        approvedBy: user.uid,
+        approvedByEmail: profile.email,
+        approvedAt: serverTimestamp(),
+        rejectionReason: status === 'rejected' ? 'Tidak memenuhi pengesahan pihak hostel.' : '',
+        updatedAt: serverTimestamp(),
+      });
+      try {
+        await addDoc(collection(db, 'studentApprovalLogs'), {
+          action: status === 'approved' ? 'STUDENT_APPROVED' : 'STUDENT_REJECTED',
+          studentUid: student.uid,
+          studentEmail: student.email || '',
+          hostelId: student.hostelId,
+          performedBy: user.uid,
+          performedByEmail: profile.email,
+          createdAt: serverTimestamp(),
+        });
+      } catch (auditError) {
+        console.warn('Student approval saved but audit log failed:', auditError);
+      }
+      setMessage(status === 'approved'
+        ? 'Pendaftaran pelajar berjaya diluluskan.'
+        : 'Pendaftaran pelajar telah ditolak.');
+      setNotice('Status pendaftaran pelajar dikemas kini.');
+    } catch (e) {
+      setError(friendlyError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pending = students.filter(item => item.approvalStatus === 'pending').length;
+  const approved = students.filter(item => item.approvalStatus === 'approved').length;
+  const rejected = students.filter(item => item.approvalStatus === 'rejected').length;
+
+  if (loading && students.length === 0) {
+    return <section className="card">Memuatkan rekod pelajar mengikut hostel penempatan…</section>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <section className="grid gap-3 sm:grid-cols-3">
+        <div className="card">
+          <p className="muted">Jumlah rekod pelajar</p>
+          <p className="mt-2 text-3xl font-bold text-navy">{students.length}</p>
+        </div>
+        <div className="card">
+          <p className="muted">Menunggu pengesahan</p>
+          <p className="mt-2 text-3xl font-bold text-amber-600">{pending}</p>
+        </div>
+        <div className="card">
+          <p className="muted">Diluluskan</p>
+          <p className="mt-2 text-3xl font-bold text-emerald-700">{approved}</p>
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="section-title">
+              {initialTab === 'emergency' ? 'Emergency Contact Pelajar' : 'Student Management'}
+            </h3>
+            <p className="muted mt-1">Rekod terhad kepada hostel yang ditugaskan kepada akaun anda.</p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+            {hostelIds.length} hostel ditugaskan
+          </span>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {hostels.filter(hostel => hostelIds.includes(hostel.id)).map(hostel => (
+            <span key={hostel.id} className="rounded-full bg-teal/10 px-3 py-1 text-xs font-medium text-teal">
+              {hostel.name}
+            </span>
+          ))}
+        </div>
+
+        {error && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {message && <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <input
+            className="field"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Cari nama, emel, telefon atau bilik"
+          />
+          <select className="field" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="all">Semua status</option>
+            <option value="pending">Menunggu pengesahan</option>
+            <option value="approved">Diluluskan</option>
+            <option value="rejected">Ditolak</option>
+          </select>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {filteredStudents.length === 0 ? (
+            <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+              Tiada rekod pelajar ditemui untuk carian atau penapis ini.
+            </p>
+          ) : filteredStudents.map(student => (
+            <div key={student.uid} className="rounded-xl border border-slate-200 p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="font-semibold text-navy">{student.fullName || 'Nama belum diisi'}</p>
+                  <p className="text-xs text-slate-500">{student.email || 'Tiada emel'} · Bilik: {student.room || 'Belum ditetapkan'}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {hostels.find(hostel => hostel.id === student.hostelId)?.name || student.hostelName || 'Hostel tidak dikenal pasti'}
+                    {' · '}{student.programme || 'Program belum diisi'}
+                  </p>
+                  <span className={
+                    student.approvalStatus === 'approved'
+                      ? 'mt-2 inline-block rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700'
+                      : student.approvalStatus === 'rejected'
+                        ? 'mt-2 inline-block rounded-full bg-red-50 px-2 py-1 text-xs text-red-700'
+                        : 'mt-2 inline-block rounded-full bg-amber-50 px-2 py-1 text-xs text-amber-700'
+                  }>
+                    {student.approvalStatus === 'approved' ? 'Diluluskan' : student.approvalStatus === 'rejected' ? 'Ditolak' : 'Menunggu'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn-secondary" onClick={() => setSelectedStudent(student)}>
+                    {initialTab === 'emergency' ? 'Lihat Waris' : 'Butiran'}
+                  </button>
+                  {initialTab !== 'emergency' && student.approvalStatus !== 'approved' && (
+                    <button className="btn-primary" disabled={busy} onClick={() => updateApproval(student, 'approved')}>
+                      Luluskan
+                    </button>
+                  )}
+                  {initialTab !== 'emergency' && student.approvalStatus !== 'rejected' && (
+                    <button className="btn-danger" disabled={busy} onClick={() => updateApproval(student, 'rejected')}>
+                      Tolak
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {selectedStudent && (
+        <section className="card">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="section-title">Butiran: {selectedStudent.fullName || selectedStudent.email}</h3>
+            <button className="btn-secondary" onClick={() => setSelectedStudent(null)}>Tutup</button>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm">
+            <p><b>Emel:</b> {selectedStudent.email || '—'}</p>
+            <p><b>Telefon:</b> {selectedStudent.phone || '—'}</p>
+            <p><b>Program:</b> {selectedStudent.programme || '—'}</p>
+            <p><b>Hostel:</b> {selectedStudent.hostelName || '—'}</p>
+            <p><b>Bilik:</b> {selectedStudent.room || '—'}</p>
+            <p><b>Status:</b> {selectedStudent.approvalStatus}</p>
+          </div>
+
+          {initialTab === 'emergency' && (
+            <div className="mt-4 border-t pt-4">
+              <h4 className="font-semibold text-navy">Maklumat waris / penjaga</h4>
+              {contacts === null ? (
+                <p className="muted mt-2">Memuatkan maklumat waris…</p>
+              ) : contacts.length === 0 ? (
+                <p className="muted mt-2">Pelajar belum mendaftarkan Emergency Contact.</p>
+              ) : contacts.map((contact, index) => (
+                <div key={index} className="mt-3 rounded-xl bg-slate-50 p-3 text-sm">
+                  <p className="font-semibold">{contact.fullName}</p>
+                  <p>{contact.relationship} · {contact.phone}</p>
+                  <p className="text-slate-500">{contact.address}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      <section className="card">
+        <h4 className="font-semibold text-navy">Ringkasan status</h4>
+        <p className="muted mt-2">Ditolak: {rejected} · Menunggu: {pending} · Diluluskan: {approved}</p>
+      </section>
+    </div>
+  );
 }
 
 function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
