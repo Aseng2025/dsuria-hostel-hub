@@ -1677,11 +1677,29 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
     if (approvalStatus === 'rejected' && !rejectionReason?.trim()) return;
     setBusy(true); setError('');
     try {
-      await updateDoc(doc(db, 'hostelMovementRequests', row.id), {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'hostelMovementRequests', row.id), {
         approvalStatus, approvedBy: user.uid, approvedByEmail: profile.email || user.email || '',
         approvedAt: serverTimestamp(), updatedAt: serverTimestamp(),
         rejectionReason: rejectionReason?.trim() || '',
       });
+      if (approvalStatus === 'approved') {
+        const cursor = new Date(row.startDate + 'T12:00:00');
+        const last = new Date(row.endDate + 'T12:00:00');
+        let dayCount = 0;
+        while (cursor <= last && dayCount < 31) {
+          const dateKey = malaysiaDateKeyFor(cursor);
+          batch.set(doc(db, 'dailyMovementApprovals', row.studentUid + '_' + dateKey), {
+            studentUid: row.studentUid, hostelId: row.hostelId, date: dateKey,
+            type: row.type, requestId: row.id, approvalStatus: 'approved',
+            approvedBy: user.uid, approvedByEmail: profile.email || user.email || '',
+            approvedAt: serverTimestamp(), startDate: row.startDate, endDate: row.endDate,
+          });
+          cursor.setDate(cursor.getDate() + 1); dayCount += 1;
+        }
+        if (cursor <= last) throw new Error('Tempoh permohonan terlalu panjang. Had maksimum 31 hari bagi satu permohonan.');
+      }
+      await batch.commit();
       await addDoc(collection(db, 'studentStatusAuditLogs'), {
         studentUid: row.studentUid, studentName: row.studentName || '', hostelId: row.hostelId,
         date: row.startDate, oldStatus: 'pending', newStatus: approvalStatus,
