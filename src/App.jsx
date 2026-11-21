@@ -636,6 +636,7 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [allLogs, setAllLogs] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -672,6 +673,13 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
       setStudents(rows); setLoading(false);
     }, e => { setError(friendlyError(e)); setLoading(false); });
   }, [hostelIds, isSuper]);
+
+  useEffect(() => {
+    const q = isSuper ? collection(db,'studentActivityLogs')
+      : hostelIds.length && hostelIds.length <= 30 ? query(collection(db,'studentActivityLogs'),where('hostelId','in',hostelIds)) : null;
+    if (!q) { setAllLogs([]); return undefined; }
+    return onSnapshot(q,snap=>setAllLogs(snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),e=>setError(friendlyError(e)));
+  },[isSuper,hostelIds]);
 
   useEffect(() => {
     if (!selectedStudent) { setContacts([]); setLogs([]); setEditForm(null); return undefined; }
@@ -773,9 +781,10 @@ function AdminWorkspace({ user, profile, isSuper = false, setNotice, initialTab 
       <div className="flex flex-wrap justify-between gap-2"><div><h3 className="section-title">{initialTab==='emergency'?'Emergency Contact Pelajar':'Student Management'}</h3><p className="muted mt-1">{isSuper?'Akses penuh semua hostel.':'Rekod terhad kepada hostel yang ditugaskan.'}</p></div><span className="text-xs text-slate-500">{hostelIds.length} hostel dalam skop</span></div>
       {error&&<p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}{message&&<p className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
       <div className="mt-4 grid gap-3 sm:grid-cols-2"><input className="field" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari nama, emel, telefon, program atau bilik"/><select className="field" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">Semua status</option><option value="draft">Draft</option><option value="pending">Pending Approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
-      <div className="mt-4 space-y-3">{filtered.map(st=><div key={st.uid} className="rounded-xl border p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3">{st.profilePhotoUrl?<img src={st.profilePhotoUrl} alt="Gambar pelajar" className="h-14 w-14 rounded-full object-cover"/>:<div className="h-14 w-14 rounded-full bg-slate-100 grid place-items-center"><UserRound/></div>}<div><b>{st.fullName||'Nama belum diisi'}</b><p className="text-xs text-slate-500">{st.email} · {st.hostelName||'—'} · Bilik {st.room||'—'}</p><span className="text-xs font-semibold">{st.approvalStatus}</span></div></div><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={()=>setSelectedStudent(st)}>Butiran & Edit</button>{st.approvalStatus!=='approved'&&<button className="btn-primary" disabled={busy} onClick={()=>decide(st,'approved')}>Approve</button>}{st.approvalStatus!=='rejected'&&<button className="btn-danger" disabled={busy} onClick={()=>decide(st,'rejected')}>Reject</button>}</div></div></div>)}</div>
+      <div className="mt-4 space-y-3">{filtered.map(st=><div key={st.uid} className="rounded-xl border p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3">{st.profilePhotoUrl?<img src={st.profilePhotoUrl} alt="Gambar pelajar" className="h-14 w-14 rounded-full object-cover"/>:<div className="h-14 w-14 rounded-full bg-slate-100 grid place-items-center"><UserRound/></div>}<div><b>{st.fullName||'Nama belum diisi'}</b><p className="text-xs text-slate-500">{st.email} · {st.hostelName||'—'} · Bilik {st.room||'—'}</p><span className="text-xs font-semibold">{st.approvalStatus}</span></div></div><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={()=>setSelectedStudent(st)}>Butiran & Edit</button>{st.approvalStatus!=='approved'&&<button className="btn-primary" disabled={busy} onClick={()=>decide(st,'approved')}>Approve</button>}{st.approvalStatus!=='rejected'&&<button className="btn-danger" disabled={busy} onClick={()=>{setSelectedStudent(st);setError('Masukkan sebab penolakan pada bahagian butiran pelajar.')}}>Reject</button>}</div></div></div>)}</div>
       {filtered.length===0&&<p className="muted mt-4">Tiada rekod pelajar ditemui.</p>}
     </section>
+<section className="card"><h3 className="section-title flex items-center gap-2"><History size={18}/> Student Activity Log</h3>{allLogs.length===0?<p className="muted mt-3">Tiada aktiviti direkodkan.</p>:allLogs.slice(0,100).map(log=><div key={log.id} className="border-b py-2 text-sm"><b>{log.action}</b><p>{log.studentEmail||log.studentUid}</p><p className="text-xs text-slate-500">{log.performedByEmail} · {log.createdAt?.toDate?.().toLocaleString("ms-MY")||"Masa tidak tersedia"}</p></div>)}</section>
     {selectedStudent&&<section className="card space-y-4">
       <div className="flex justify-between gap-2"><h3 className="section-title">Butiran Pelajar: {selectedStudent.fullName}</h3><button className="btn-secondary" onClick={()=>setSelectedStudent(null)}>Tutup</button></div>
       {selectedStudent.profilePhotoUrl&&<img src={selectedStudent.profilePhotoUrl} alt="Gambar profil pelajar" className="h-28 w-28 rounded-xl object-cover"/>}
