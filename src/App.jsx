@@ -12,7 +12,7 @@ import {
   Award, Settings, ArrowLeft, LayoutDashboard, Trash, History, Pencil,
 } from 'lucide-react'
 import { auth, db, provider, SUPER_ADMIN_EMAIL } from './firebase'
-import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 
 const ROLE_LABEL = {
@@ -1613,11 +1613,11 @@ const MOVEMENT_TYPES = [
 ];
 
 
-function MovementDestinationMap({ selected, onSelect }) {
+function DestinationMapClick({ onSelect }) {\n  useMapEvents({ click(event) { onSelect({ lat: event.latlng.lat, lng: event.latlng.lng, label: 'Pin manual (' + event.latlng.lat.toFixed(5) + ', ' + event.latlng.lng.toFixed(5) + ')' }); } });\n  return null;\n}\n\nfunction MovementDestinationMap({ selected, onSelect }) {
   const initial = selected ? [selected.lat, selected.lng] : [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng];
   return <div className="mt-3 h-64 overflow-hidden rounded-xl border">
     <MapContainer center={initial} zoom={13} scrollWheelZoom className="h-full w-full">
-      <MapRecenter center={selected ? [selected.lat, selected.lng] : [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng]}/>
+      <MapRecenter center={selected ? [selected.lat, selected.lng] : [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng]}/>\n      <DestinationMapClick onSelect={onSelect}/>
       <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
       {selected && <CircleMarker center={[selected.lat,selected.lng]} radius={9} pathOptions={{color:'#b45309',fillColor:'#f59e0b',fillOpacity:1}}><Popup>{selected.label}</Popup></CircleMarker>}
     </MapContainer>
