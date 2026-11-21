@@ -105,7 +105,7 @@ service cloud.firestore {
           'uid', 'email', 'fullName', 'phone', 'programme', 'hostelId',
           'hostelName', 'room', 'updatedAt', 'approvalStatus', 'approvedBy',
           'approvedByEmail', 'approvedAt', 'rejectionReason', 'submittedAt',
-          'submissionVersion', 'lastEditedBy'
+          'submissionVersion', 'lastEditedBy', 'profilePhotoUrl', 'profilePhotoPath'
         ])
         && request.resource.data.uid == studentUid
         && request.resource.data.email == request.auth.token.email
@@ -116,7 +116,9 @@ service cloud.firestore {
         && request.resource.data.hostelId is string
         && request.resource.data.hostelName is string
         && request.resource.data.room is string
-        && request.resource.data.approvalStatus in ['draft', 'pending', 'approved', 'rejected'];
+        && request.resource.data.approvalStatus in ['draft', 'pending', 'approved', 'rejected']
+        && (!('profilePhotoUrl' in request.resource.data) || request.resource.data.profilePhotoUrl is string)
+        && (!('profilePhotoPath' in request.resource.data) || request.resource.data.profilePhotoPath is string);
     }
 
     function validSubmittedProfile() {
