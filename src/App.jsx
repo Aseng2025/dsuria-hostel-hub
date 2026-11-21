@@ -430,6 +430,7 @@ function HomeDashboard({ profile, isSuper, onBack }) {
     !isSuper && profile.role === 'admin'
   );
   const [hostelError, setHostelError] = useState('');
+  const [summaryError, setSummaryError] = useState('');
   const [studentSummary, setStudentSummary] = useState({ total: 0, pending: 0, approved: 0, rejected: 0 });
   const [summaryLoading, setSummaryLoading] = useState(!isSuper && profile.role === 'admin');
 
@@ -456,7 +457,7 @@ function HomeDashboard({ profile, isSuper, onBack }) {
       });
       setSummaryLoading(false);
     }, error => {
-      setHostelError(friendlyError(error));
+      setSummaryError(friendlyError(error));
       setSummaryLoading(false);
     });
   }, [isSuper, profile.role, profile.hostelIds]);
@@ -518,7 +519,9 @@ function HomeDashboard({ profile, isSuper, onBack }) {
       </section>
 
       {profile.role === 'admin' && !isSuper && (
-        <section className="grid gap-3 sm:grid-cols-4">
+        <section className="space-y-2">
+          {summaryError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">Ralat ringkasan pelajar: {summaryError}</p>}
+          <div className="grid gap-3 sm:grid-cols-4">
           {[
             { label: 'Jumlah pelajar', value: studentSummary.total },
             { label: 'Menunggu', value: studentSummary.pending },
@@ -532,6 +535,7 @@ function HomeDashboard({ profile, isSuper, onBack }) {
               </p>
             </div>
           ))}
+          </div>
         </section>
       )}
 
