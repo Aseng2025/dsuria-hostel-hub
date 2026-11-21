@@ -646,7 +646,7 @@ service cloud.firestore {
       allow create: if isStudent()
         && request.resource.data.keys().hasOnly([
           'studentUid','studentName','studentEmail','hostelId','hostelName','room',
-          'type','startDate','endDate','destination','reason','approvalStatus','createdAt','updatedAt'
+          'type','startDate','endDate','departureTime','returnTime','durationDays','destination','destinationLat','destinationLng','destinationAddress','reason','approvalStatus','createdAt','updatedAt'
         ])
         && request.resource.data.studentUid == request.auth.uid
         && exists(/databases/$(database)/documents/studentProfiles/$(request.auth.uid))
@@ -656,7 +656,14 @@ service cloud.firestore {
         && request.resource.data.startDate is string
         && request.resource.data.endDate is string
         && request.resource.data.startDate <= request.resource.data.endDate
+        && request.resource.data.departureTime is string
+        && request.resource.data.returnTime is string
+        && request.resource.data.durationDays is int
+        && request.resource.data.durationDays > 0 && request.resource.data.durationDays <= 31
         && request.resource.data.destination is string && request.resource.data.destination.size() > 0
+        && request.resource.data.destinationLat is number
+        && request.resource.data.destinationLng is number
+        && request.resource.data.destinationAddress is string
         && request.resource.data.reason is string && request.resource.data.reason.size() > 0
         && request.resource.data.approvalStatus == 'pending';
       allow update: if (isSuperAdmin() || (isAdmin() && resource.data.hostelId in userData(request.auth.uid).hostelIds))
