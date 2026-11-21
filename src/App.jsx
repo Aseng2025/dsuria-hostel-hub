@@ -12,6 +12,8 @@ import {
   Award, Settings, ArrowLeft, LayoutDashboard, Trash, History, Pencil,
 } from 'lucide-react'
 import { auth, db, provider, SUPER_ADMIN_EMAIL } from './firebase'
+import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet'
+import 'leaflet/dist/leaflet.css'
 
 const ROLE_LABEL = {
   superadmin: 'Super Admin',
@@ -1742,9 +1744,41 @@ function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
   );
 }
 
+
+function MapRecenter({ center }) {
+  const map = useMap()
+  useEffect(() => { map.setView(center, map.getZoom()) }, [center, map])
+  return null
+}
+
+function DailyStatusMap({ gpsLocation, searchLocation }) {
+  const hostel = [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng]
+  const center = gpsLocation ? [gpsLocation.lat, gpsLocation.lng] : hostel
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
+      <div className="h-72 w-full">
+        <MapContainer center={center} zoom={16} scrollWheelZoom className="h-full w-full">
+          <MapRecenter center={center}/>
+          <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
+          <Circle center={hostel} radius={DAILY_GEOFENCE.radius} pathOptions={{ color: '#0f9f8f', fillColor: '#0f9f8f', fillOpacity: 0.12 }}/>
+          <CircleMarker center={hostel} radius={8} pathOptions={{ color: '#0f766e', fillColor: '#14b8a6', fillOpacity: 1 }}><Popup>Lokasi rujukan hostel</Popup></CircleMarker>
+          {gpsLocation && <CircleMarker center={[gpsLocation.lat, gpsLocation.lng]} radius={8} pathOptions={{ color: '#1d4ed8', fillColor: '#3b82f6', fillOpacity: 1 }}><Popup>Lokasi GPS semasa · ketepatan ±{gpsLocation.accuracy}m</Popup></CircleMarker>}
+          {searchLocation && <CircleMarker center={[searchLocation.lat, searchLocation.lng]} radius={7} pathOptions={{ color: '#b45309', fillColor: '#f59e0b', fillOpacity: 1 }}><Popup>{searchLocation.label}</Popup></CircleMarker>}
+        </MapContainer>
+      </div>
+      <div className="flex flex-wrap gap-3 p-3 text-xs text-slate-600"><span>🟢 Lokasi rujukan hostel</span><span>🔵 GPS pelajar</span><span>🟠 Lokasi carian</span><span>Bulatan = radius 100m</span></div>
+    </div>
+  )
+}
+
 function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
   const today = malaysiaDateKey();
   const docId = user.uid + '_' + today;
+  const [studentProfile, setStudentProfile] = useState(null)
+  const [gpsLocation, setGpsLocation] = useState(null)
+  const [searchText, setSearchText] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [searchLocation, setSearchLocation] = useState(null)
   const [status, setStatus] = useState('AT HOSTEL');
   const [record, setRecord] = useState(null);
   const [approvedMovement, setApprovedMovement] = useState(null);
@@ -1762,6 +1796,13 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
     : period === 'weekly'
       ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
       : date;
+
+  useEffect(() => {
+    if (profile.role !== 'student') return undefined;
+    let active = true;
+    getDoc(doc(db, 'studentProfiles', user.uid)).then(snap => { if (active) setStudentProfile(snap.exists() ? snap.data() : null); }).catch(e => setError(friendlyError(e)));
+    return () => { active = false; };
+  }, [profile.role, user.uid]);
 
   useEffect(() => {
     if (profile.role !== 'student') return undefined;
@@ -1816,10 +1857,24 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
     return () => { active = false; stops.forEach(stop => stop()); };
   }, [isAdmin, isSuper, hostelIds.join('|'), date, rangeStart]);
 
+
+  const searchPlaces = async () => {
+    if (!searchText.trim()) return;
+    setError('');
+    try {
+      const response = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=' + encodeURIComponent(searchText.trim()));
+      if (!response.ok) throw new Error('Carian lokasi tidak berjaya. Cuba sebentar lagi.');
+      const data = await response.json();
+      setSearchResults(data.map(x => ({ label: x.display_name, lat: Number(x.lat), lng: Number(x.lon) })));
+      if (!data.length) setMessage('Tiada lokasi ditemui. Cuba kata carian lain.');
+    } catch (e) { setError(e.message || 'Carian lokasi gagal.'); }
+  };
+
   const save = async () => {
     setBusy(true); setError(''); setMessage('');
     try {
-      if (!profile.hostelId) throw new Error('Profil pelajar belum mempunyai penempatan hostel.');
+      const hostelId = studentProfile?.hostelId;
+      if (!hostelId) throw new Error('Profil pelajar belum mempunyai penempatan hostel. Sila hubungi Warden untuk melengkapkan penempatan hostel dan bilik.');
       const gps = await new Promise((resolve, reject) => {
         if (!navigator.geolocation) return reject(new Error('GPS tidak disokong oleh browser.'));
         navigator.geolocation.getCurrentPosition(p => resolve({
@@ -1827,6 +1882,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         }), e => reject(new Error(e.code === 1 ? 'Kebenaran GPS ditolak. Benarkan Location untuk website ini.' : 'Lokasi GPS tidak dapat diperoleh. Cuba lagi.')),
         { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
       });
+      setGpsLocation(gps);
       const distance = geoDistance(gps.lat, gps.lng, DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng);
       const verified = distance <= DAILY_GEOFENCE.radius;
       const approvedTypes = approvedMovement?.type ? [approvedMovement.type] : [];
@@ -1836,9 +1892,9 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
       const finalStatus = verified ? 'AT HOSTEL' : (status === 'AT HOSTEL' ? 'NOT VERIFIED' : status);
       const previous = record;
       await setDoc(doc(db, 'dailyStudentStatuses', docId), {
-        studentUid: user.uid, studentName: profile.fullName || profile.displayName || '',
-        studentEmail: profile.email || user.email || '', hostelId: profile.hostelId,
-        hostelName: profile.hostelName || '', room: profile.room || '', date: today,
+        studentUid: user.uid, studentName: studentProfile.fullName || '',
+        studentEmail: studentProfile.email || user.email || '', hostelId,
+        hostelName: studentProfile.hostelName || '', room: studentProfile.room || '', date: today,
         status: finalStatus, locationVerified: verified, latitude: gps.lat, longitude: gps.lng,
         accuracy: gps.accuracy, distanceFromHostel: Math.round(distance),
         lastLocationAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: user.uid,
@@ -1892,6 +1948,16 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
               {['AT HOSTEL', ...(approvedMovement?.type ? [approvedMovement.type] : [])].map(item => <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
+
+          <div className="mt-4">
+            <label className="block text-sm font-medium">Cari lokasi pada peta</label>
+            <div className="mt-1 flex gap-2">
+              <input className="field min-w-0 flex-1" value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') searchPlaces(); }} placeholder="Contoh: Ampang, Kuala Lumpur"/>
+              <button className="btn-secondary shrink-0" type="button" onClick={searchPlaces}>Cari</button>
+            </div>
+            {searchResults.length > 0 && <div className="mt-2 max-h-36 overflow-auto rounded-lg border bg-white">{searchResults.map((x,i) => <button key={i} type="button" className="block w-full border-b p-2 text-left text-xs hover:bg-slate-50" onClick={() => { setSearchLocation(x); setSearchResults([]); }}>{x.label}</button>)}</div>}
+          </div>
+          <DailyStatusMap gpsLocation={gpsLocation || (record?.latitude != null ? { lat: record.latitude, lng: record.longitude, accuracy: record.accuracy || 0 } : null)} searchLocation={searchLocation}/>
           <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm">
             <p><b>Status hari ini:</b> {record?.status || 'Belum dikemas kini'}</p>
             <p><b>GPS:</b> {record?.locationVerified ? 'Disahkan dalam radius 100m' : 'Belum disahkan dalam radius 100m'}</p>
