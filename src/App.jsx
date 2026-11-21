@@ -1639,7 +1639,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
     const publish = () => {
       if (!active) return;
       setStudents(Array.from(studentMap.values()).flat());
-      setRecords(Array.from(statusMap.values()).flat());
+      setRecords(Array.from(statusMap.values()).flat().filter(item => item.date >= rangeStart && item.date <= date));
       setLoading(false);
     };
     const watchHostel = hostelId => {
@@ -1647,7 +1647,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         studentMap.set(hostelId, snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(x => x.approvalStatus === 'approved'));
         publish();
       }, e => setError(friendlyError(e))));
-      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('hostelId', '==', hostelId), where('date', '>=', rangeStart), where('date', '<=', date)), snap => {
+      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('hostelId', '==', hostelId)), snap => {
         statusMap.set(hostelId, snap.docs.map(d => ({ id: d.id, ...d.data() })));
         publish();
       }, e => setError(friendlyError(e))));
@@ -1657,7 +1657,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         studentMap.set('all', snap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(x => x.approvalStatus === 'approved'));
         publish();
       }, e => setError(friendlyError(e))));
-      stops.push(onSnapshot(query(collection(db, 'dailyStudentStatuses'), where('date', '>=', rangeStart), where('date', '<=', date)), snap => {
+      stops.push(onSnapshot(collection(db, 'dailyStudentStatuses'), snap => {
         statusMap.set('all', snap.docs.map(d => ({ id: d.id, ...d.data() })));
         publish();
       }, e => setError(friendlyError(e))));
