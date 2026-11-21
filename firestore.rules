@@ -245,20 +245,25 @@ service cloud.firestore {
     match /studentProfiles/{studentUid} {
       allow read: if canReadStudentRecord(studentUid);
 
-      allow create: if signedIn()
-        && request.auth.uid == studentUid
-        && isStudent()
-        && validProfileShape(studentUid)
-        && request.resource.data.approvalStatus in ['draft', 'pending']
-        && (
-          request.resource.data.approvalStatus == 'draft'
-          || (
-            validSubmittedProfile()
-            && completeEmergencyContactsAfter(studentUid)
+      allow create: if (
+          signedIn()
+          && request.auth.uid == studentUid
+          && isStudent()
+          && validProfileShape(studentUid)
+          && request.resource.data.approvalStatus in ['draft', 'pending']
+          && (
+            request.resource.data.approvalStatus == 'draft'
+            || (validSubmittedProfile() && completeEmergencyContactsAfter(studentUid))
           )
+          && !('approvedBy' in request.resource.data)
+          && !('approvedAt' in request.resource.data)
         )
-        && !('approvedBy' in request.resource.data)
-        && !('approvedAt' in request.resource.data);
+        || (
+          isSuperAdmin()
+          && request.resource.data.uid == studentUid
+          && request.resource.data.email is string
+          && validAdminProfileEdit()
+        );
 
       allow update: if (
           signedIn()
