@@ -233,12 +233,29 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
-    // Hostels
+    // Hostel master data and room capacity
+    function validHostelData() {
+      return request.resource.data.keys().hasOnly([
+          'name', 'status', 'roomCount', 'capacityPerRoom', 'totalCapacity',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.status in ['active', 'inactive']
+        && request.resource.data.roomCount is int
+        && request.resource.data.roomCount > 0
+        && request.resource.data.capacityPerRoom is int
+        && request.resource.data.capacityPerRoom > 0
+        && request.resource.data.totalCapacity == request.resource.data.roomCount * request.resource.data.capacityPerRoom;
+    }
+
     match /hostels/{hostelId} {
       allow read: if isSuperAdmin()
         || (isActiveUser() && resource.data.status == 'active');
 
-      allow create, update, delete: if isSuperAdmin();
+      allow create: if isSuperAdmin() && validHostelData();
+      allow update: if isSuperAdmin() && validHostelData();
+      allow delete: if isSuperAdmin();
     }
 
     // Student profiles
