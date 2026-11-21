@@ -1328,16 +1328,6 @@ function HostelRules({ user, profile, isAdmin, isSuper, setNotice }) {
   const [content, setContent] = useState('');
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
   const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
-  const rangeStart = period === 'monthly'
-    ? date.slice(0, 7) + '-01'
-    : period === 'weekly'
-      ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
-      : date;
-  const rangeStart = period === 'monthly'
-    ? date.slice(0, 7) + '-01'
-    : period === 'weekly'
-      ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
-      : date;
 
   useEffect(() => {
     const rulesQuery = profile.role === 'student'
@@ -1597,7 +1587,7 @@ const DAILY_STATUS_OPTIONS = ['AT HOSTEL', 'OUTING', 'BALIK RUMAH', 'BALIK KAMPU
 const DAILY_GEOFENCE = { lat: 3.1516121, lng: 101.7471753, radius: 100 };
 
 function malaysiaDateKeyFor(inputDate) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(inputDate);
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return values.year + '-' + values.month + '-' + values.day;
 }
@@ -1624,6 +1614,11 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('daily');
   const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
+  const rangeStart = period === 'monthly'
+    ? date.slice(0, 7) + '-01'
+    : period === 'weekly'
+      ? (() => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() - 6); return malaysiaDateKeyFor(d); })()
+      : date;
 
   useEffect(() => {
     if (profile.role !== 'student') return undefined;
