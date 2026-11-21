@@ -1,6 +1,7 @@
 name: Deploy Development Preview
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - development/module-16-admin-management
