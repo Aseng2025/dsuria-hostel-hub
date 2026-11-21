@@ -404,6 +404,8 @@ function ModuleView({ id, user, profile, isAdmin, isSuper, setNotice, onBack }) 
             </p>
           </section>
         )
+      ) : id === 'outing' ? (
+        <MovementRequests user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} />
       ) : id === 'daily-status' ? (
         <DailyStudentStatus user={user} profile={profile} isAdmin={isAdmin} isSuper={isSuper} setNotice={setNotice} />
       ) : id === 'rules' ? (
@@ -1598,6 +1600,128 @@ function geoDistance(lat1, lon1, lat2, lon2) {
   const rad = n => n * Math.PI / 180;
   const a = Math.sin(rad(lat2-lat1)/2) ** 2 + Math.cos(rad(lat1))*Math.cos(rad(lat2))*Math.sin(rad(lon2-lon1)/2) ** 2;
   return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+
+const MOVEMENT_TYPES = [
+  { value: 'OUTING', label: 'OUTING' },
+  { value: 'BALIK RUMAH', label: 'BALIK RUMAH' },
+  { value: 'BALIK KAMPUNG', label: 'BALIK KAMPUNG' },
+  { value: 'CUTI', label: 'CUTI' },
+];
+
+function MovementRequests({ user, profile, isAdmin, isSuper, setNotice }) {
+  const [type, setType] = useState('OUTING');
+  const [startDate, setStartDate] = useState(malaysiaDateKey());
+  const [endDate, setEndDate] = useState(malaysiaDateKey());
+  const [destination, setDestination] = useState('');
+  const [reason, setReason] = useState('');
+  const [rows, setRows] = useState([]);
+  const [students, setStudents] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const hostelIds = Array.isArray(profile.hostelIds) ? profile.hostelIds : [];
+
+  useEffect(() => {
+    if (profile.role === 'student') {
+      return onSnapshot(query(collection(db, 'hostelMovementRequests'), where('studentUid', '==', user.uid)), snap => {
+        setRows(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
+      }, e => setError(friendlyError(e)));
+    }
+    if (!isAdmin) return undefined;
+    const unsubs = [];
+    const maps = new Map();
+    const publish = () => setRows(Array.from(maps.values()).flat().sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
+    const watch = hostelId => unsubs.push(onSnapshot(query(collection(db, 'hostelMovementRequests'), where('hostelId', '==', hostelId)), snap => {
+      maps.set(hostelId, snap.docs.map(d => ({ id: d.id, ...d.data() }))); publish();
+    }, e => setError(friendlyError(e))));
+    if (isSuper) unsubs.push(onSnapshot(collection(db, 'hostelMovementRequests'), snap => {
+      maps.set('all', snap.docs.map(d => ({ id: d.id, ...d.data() }))); publish();
+    }, e => setError(friendlyError(e))));
+    else hostelIds.forEach(watch);
+    return () => unsubs.forEach(stop => stop());
+  }, [profile.role, user.uid, isAdmin, isSuper, hostelIds.join('|')]);
+
+  useEffect(() => {
+    if (!isAdmin || !rows.length) return undefined;
+    let active = true;
+    const ids = [...new Set(rows.map(row => row.studentUid).filter(Boolean))];
+    Promise.all(ids.map(async uid => {
+      const snap = await getDoc(doc(db, 'studentProfiles', uid));
+      return [uid, snap.exists() ? snap.data() : null];
+    })).then(entries => { if (active) setStudents(Object.fromEntries(entries)); })
+      .catch(e => { if (active) setError(friendlyError(e)); });
+    return () => { active = false; };
+  }, [isAdmin, rows.map(row => row.id).join('|')]);
+
+  const submit = async () => {
+    setBusy(true); setError('');
+    try {
+      if (!profile.hostelId) throw new Error('Profil belum mempunyai penempatan hostel.');
+      if (!destination.trim() || !reason.trim()) throw new Error('Destinasi dan sebab permohonan wajib diisi.');
+      if (endDate < startDate) throw new Error('Tarikh tamat tidak boleh lebih awal daripada tarikh mula.');
+      await addDoc(collection(db, 'hostelMovementRequests'), {
+        studentUid: user.uid, studentName: profile.fullName || '', studentEmail: profile.email || user.email || '',
+        hostelId: profile.hostelId, hostelName: profile.hostelName || '', room: profile.room || '',
+        type, startDate, endDate, destination: destination.trim(), reason: reason.trim(),
+        approvalStatus: 'pending', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      setDestination(''); setReason('');
+      setNotice('Permohonan telah dihantar kepada Admin/Warden.');
+    } catch (e) { setError(e.message || friendlyError(e)); }
+    finally { setBusy(false); }
+  };
+
+  const decide = async (row, approvalStatus) => {
+    const rejectionReason = approvalStatus === 'rejected' ? window.prompt('Sebab permohonan ditolak:') : '';
+    if (approvalStatus === 'rejected' && !rejectionReason?.trim()) return;
+    setBusy(true); setError('');
+    try {
+      await updateDoc(doc(db, 'hostelMovementRequests', row.id), {
+        approvalStatus, approvedBy: user.uid, approvedByEmail: profile.email || user.email || '',
+        approvedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        rejectionReason: rejectionReason?.trim() || '',
+      });
+      await addDoc(collection(db, 'studentStatusAuditLogs'), {
+        studentUid: row.studentUid, studentName: row.studentName || '', hostelId: row.hostelId,
+        date: row.startDate, oldStatus: 'pending', newStatus: approvalStatus,
+        action: approvalStatus === 'approved' ? 'MOVEMENT_REQUEST_APPROVED' : 'MOVEMENT_REQUEST_REJECTED',
+        performedBy: user.uid, performedByEmail: profile.email || user.email || '',
+        reason: rejectionReason?.trim() || '', createdAt: serverTimestamp(),
+      });
+      setNotice('Keputusan permohonan telah direkodkan.');
+    } catch (e) { setError(friendlyError(e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {profile.role === 'student' && <section className="card">
+        <h3 className="section-title">Permohonan Keluar / Cuti</h3>
+        <p className="muted mt-1">Permohonan perlu diluluskan oleh Admin/Warden sebelum pengecualian curfew diberikan.</p>
+        <label className="mt-3 block text-sm font-medium">Jenis permohonan<select className="field mt-1" value={type} onChange={e=>setType(e.target.value)}>{MOVEMENT_TYPES.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select></label>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-medium">Tarikh mula<input className="field mt-1" type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label>
+          <label className="text-sm font-medium">Tarikh tamat<input className="field mt-1" type="date" value={endDate} min={startDate} onChange={e=>setEndDate(e.target.value)}/></label>
+        </div>
+        <label className="mt-3 block text-sm font-medium">Destinasi<input className="field mt-1" value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Nyatakan destinasi"/></label>
+        <label className="mt-3 block text-sm font-medium">Sebab permohonan<textarea className="field mt-1 min-h-24" value={reason} onChange={e=>setReason(e.target.value)} placeholder="Nyatakan sebab permohonan"/></label>
+        <button className="btn-primary mt-4 w-full" disabled={busy} onClick={submit}>{busy?'Menghantar…':'Hantar Permohonan'}</button>
+      </section>}
+      <section className="card">
+        <h3 className="section-title">{profile.role === 'student' ? 'Sejarah Permohonan Saya' : 'Permohonan Pelajar'}</h3>
+        {!rows.length ? <p className="muted mt-3">Tiada permohonan direkodkan.</p> : <div className="mt-3 space-y-3">
+          {rows.map(row => <article key={row.id} className="rounded-xl border p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2"><div><b>{row.type} · {row.studentName}</b><p className="text-xs text-slate-500">{row.hostelName || row.hostelId} · {row.startDate} hingga {row.endDate}</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">{row.approvalStatus?.toUpperCase()}</span></div>
+            <p className="mt-2 text-sm">Destinasi: {row.destination}</p><p className="text-sm">Sebab: {row.reason}</p>
+            {row.rejectionReason && <p className="mt-2 text-sm text-red-700">Sebab ditolak: {row.rejectionReason}</p>}
+            {isAdmin && row.approvalStatus === 'pending' && <div className="mt-3 flex gap-2"><button className="btn-primary" disabled={busy} onClick={()=>decide(row,'approved')}>Luluskan</button><button className="btn-secondary" disabled={busy} onClick={()=>decide(row,'rejected')}>Tolak</button></div>}
+          </article>)}
+        </div>}
+      </section>
+    </div>
+  );
 }
 
 function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
