@@ -1943,7 +1943,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
       <section className="card">
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="section-title">Laporan Status</h3><select className="field max-w-44" value={period} onChange={e => setPeriod(e.target.value)}><option value="daily">Harian</option><option value="weekly">Mingguan</option><option value="monthly">Bulanan</option></select></div>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{counts.map(x => <div key={x.status} className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">{x.status}</p><b className="text-xl">{x.count}</b></div>)}</div>
-        <p className="muted mt-3 text-xs">Ringkasan berdasarkan rekod yang dimuatkan untuk tarikh pilihan. Sejarah mingguan dan bulanan penuh akan memerlukan carian rekod merentasi julat tarikh.</p>
+        <p className="muted mt-3 text-xs">Ringkasan dikira daripada rekod dalam julat tarikh pilihan: hari berkenaan, 7 hari sehingga tarikh pilihan, atau bulan berkenaan.</p>
       </section>
     </div>
   );
