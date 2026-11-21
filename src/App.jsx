@@ -1060,46 +1060,19 @@ function AdminManagement({ me, setNotice }) {
   }
 
   const saveHostel = async () => {
-    const name = hostelName.trim()
-
-    setMessage('')
-    setError('')
-
-    if (!name) {
-      return setMessage('Masukkan nama hostel.')
-    }
-
-    setBusy(true)
-
+    const name=hostelName.trim(), rooms=Number(roomCount), people=Number(capacityPerRoom);
+    setMessage(''); setError('');
+    if(!name) return setMessage('Masukkan nama hostel.');
+    if(!Number.isInteger(rooms)||rooms<1) return setMessage('Jumlah bilik mesti sekurang-kurangnya 1.');
+    if(!Number.isInteger(people)||people<1) return setMessage('Kapasiti penghuni setiap bilik mesti sekurang-kurangnya 1.');
+    setBusy(true);
     try {
-      if (editing) {
-        await updateDoc(doc(db, 'hostels', editing.id), {
-          name,
-          updatedAt: serverTimestamp(),
-          updatedBy: me.uid,
-        })
-
-        await audit('HOSTEL_UPDATED', editing.id, null, null, name)
-      } else {
-        const ref = await addDoc(collection(db, 'hostels'), {
-          name,
-          status: 'active',
-          createdAt: serverTimestamp(),
-          createdBy: me.uid,
-        })
-
-        await audit('HOSTEL_CREATED', ref.id, null, null, name)
-      }
-
-      setHostelName('')
-      setEditing(null)
-      setMessage('Hostel berjaya disimpan.')
-    } catch (e) {
-      setError(friendlyError(e))
-    } finally {
-      setBusy(false)
-    }
-  }
+      const data={name,roomCount:rooms,capacityPerRoom:people,totalCapacity:rooms*people,updatedAt:serverTimestamp(),updatedBy:me.uid};
+      if(editing){await updateDoc(doc(db,'hostels',editing.id),data);await audit('HOSTEL_UPDATED',editing.id,null,null,JSON.stringify({name,roomCount:rooms,capacityPerRoom:people}));}
+      else {const ref=await addDoc(collection(db,'hostels'),{...data,status:'active',createdAt:serverTimestamp(),createdBy:me.uid});await audit('HOSTEL_CREATED',ref.id,null,null,JSON.stringify({name,roomCount:rooms,capacityPerRoom:people}));}
+      setHostelName('');setRoomCount('');setCapacityPerRoom('');setEditing(null);setMessage('Maklumat hostel berjaya disimpan.');setNotice('Maklumat hostel dikemas kini.');
+    } catch(e){setError(friendlyError(e));} finally{setBusy(false);}
+  };
 
   const toggleHostel = async (hostel) => {
     const status = hostel.status === 'active' ? 'inactive' : 'active'
@@ -1121,6 +1094,17 @@ function AdminManagement({ me, setNotice }) {
       setBusy(false)
     }
   }
+
+  const deleteHostel = async hostel => {
+    if(!window.confirm('Padam hostel ini secara kekal? Hanya boleh jika tiada penghuni atau Admin yang ditugaskan.')) return;
+    setBusy(true);setError('');
+    try{
+      const students=await getDocs(query(collection(db,'studentProfiles'),where('hostelId','==',hostel.id)));
+      const assigned=await getDocs(query(collection(db,'approvedUsers'),where('hostelIds','array-contains',hostel.id)));
+      if(!students.empty||!assigned.empty) throw new Error('Hostel masih mempunyai penghuni atau Admin yang ditugaskan. Nyahaktifkan hostel jika tidak digunakan.');
+      await deleteDoc(doc(db,'hostels',hostel.id));await audit('HOSTEL_DELETED',hostel.id,null,null,hostel.name);setMessage('Hostel berjaya dipadam.');
+    }catch(e){setError(friendlyError(e));}finally{setBusy(false);}
+  };
 
   const adminList = approved.filter(item => item.role === 'admin')
 
@@ -1198,65 +1182,24 @@ function AdminManagement({ me, setNotice }) {
 
       <section className="card">
         <h3 className="section-title">Pengurusan Hostel ({hostels.length})</h3>
-
-        <div className="flex flex-col sm:flex-row gap-2 mt-3">
-          <input
-            className="field"
-            value={hostelName}
-            onChange={e => setHostelName(e.target.value)}
-            placeholder="Nama hostel"
-          />
-
-          <button className="btn-primary" onClick={saveHostel} disabled={busy}>
-            {editing ? 'Kemaskini' : 'Tambah Hostel'}
-          </button>
-
-          {editing && (
-            <button
-              className="btn-secondary"
-              onClick={() => {
-                setEditing(null)
-                setHostelName('')
-              }}
-            >
-              Batal
-            </button>
-          )}
+        <p className="muted mt-2">Tetapkan jumlah bilik dan kapasiti maksimum penghuni setiap bilik.</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className="text-sm">Nama hostel<input className="field mt-1" value={hostelName} onChange={e=>setHostelName(e.target.value)} placeholder="Contoh: AMPANG MAS A-9-8"/></label>
+          <label className="text-sm">Jumlah bilik<input className="field mt-1" type="number" min="1" step="1" value={roomCount} onChange={e=>setRoomCount(e.target.value)} placeholder="Contoh: 20"/></label>
+          <label className="text-sm">Maksimum penghuni setiap bilik<input className="field mt-1" type="number" min="1" step="1" value={capacityPerRoom} onChange={e=>setCapacityPerRoom(e.target.value)} placeholder="Contoh: 4"/></label>
+          <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Jumlah kapasiti hostel</p><p className="text-xl font-bold">{(Number(roomCount)||0)*(Number(capacityPerRoom)||0)} orang</p></div>
         </div>
-
-        {hostels.map(hostel => (
-          <div
-            key={hostel.id}
-            className="py-3 border-b flex flex-col sm:flex-row gap-2 sm:justify-between"
-          >
-            <div>
-              <b>{hostel.name}</b>
-              <p className="text-xs text-slate-500">
-                {hostel.status} · {hostel.id}
-              </p>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                className="btn-secondary"
-                onClick={() => {
-                  setEditing(hostel)
-                  setHostelName(hostel.name)
-                }}
-              >
-                Edit
-              </button>
-
-              <button
-                className="btn-danger"
-                onClick={() => toggleHostel(hostel)}
-                disabled={busy}
-              >
-                {hostel.status === 'active' ? 'Nyahaktif' : 'Aktifkan'}
-              </button>
-            </div>
-          </div>
-        ))}
+        <div className="mt-3 flex flex-wrap gap-2"><button className="btn-primary" onClick={saveHostel} disabled={busy}>{editing?'Simpan Perubahan':'Tambah Hostel'}</button>
+          {editing&&<button className="btn-secondary" onClick={()=>{setEditing(null);setHostelName('');setRoomCount('');setCapacityPerRoom('')}}>Batal</button>}</div>
+        {message&&<p className="mt-3 text-sm text-emerald-700">{message}</p>}{error&&<p className="mt-3 text-sm text-red-700">{error}</p>}
+        <div className="mt-4 space-y-3">{hostels.map(hostel=><div key={hostel.id} className="rounded-xl border p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><b>{hostel.name}</b><p className="text-xs text-slate-500">{hostel.status} · {hostel.roomCount||0} bilik · {hostel.capacityPerRoom||0} orang/bilik · Kapasiti {hostel.totalCapacity||((hostel.roomCount||0)*(hostel.capacityPerRoom||0))}</p></div>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-secondary" onClick={()=>{setEditing(hostel);setHostelName(hostel.name||'');setRoomCount(String(hostel.roomCount||''));setCapacityPerRoom(String(hostel.capacityPerRoom||''));window.scrollTo({top:0,behavior:'smooth'})}}>Edit</button>
+            <button className="btn-secondary" onClick={()=>toggleHostel(hostel)} disabled={busy}>{hostel.status==='active'?'Nyahaktif':'Aktifkan'}</button>
+            <button className="btn-danger" onClick={()=>deleteHostel(hostel)} disabled={busy}>Padam</button>
+          </div></div>
+        </div>)}{!hostels.length&&<p className="muted">Belum ada hostel. Isi maklumat di atas dan klik Tambah Hostel.</p>}</div>
       </section>
 
       <section className="card">
