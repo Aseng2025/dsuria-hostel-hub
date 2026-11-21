@@ -1753,7 +1753,7 @@ function MapRecenter({ center }) {
 
 function DailyStatusMap({ gpsLocation, searchLocation }) {
   const hostel = [DAILY_GEOFENCE.lat, DAILY_GEOFENCE.lng]
-  const center = gpsLocation ? [gpsLocation.lat, gpsLocation.lng] : hostel
+  const center = searchLocation ? [searchLocation.lat, searchLocation.lng] : (gpsLocation ? [gpsLocation.lat, gpsLocation.lng] : hostel)
   return (
     <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
       <div className="h-72 w-full">
@@ -1945,7 +1945,7 @@ function DailyStudentStatus({ user, profile, isAdmin, isSuper, setNotice }) {
         {loading ? <p className="muted mt-3">Memuatkan status…</p> : <>
           <label className="mt-4 block text-sm font-medium">Status keberadaan
             <select className="field mt-1" value={status} onChange={e => setStatus(e.target.value)}>
-              {['AT HOSTEL', ...(approvedMovement?.type ? [approvedMovement.type] : [])].map(item => <option key={item} value={item}>{item}</option>)}
+              {['AT HOSTEL','OUTING','BALIK RUMAH','BALIK KAMPUNG','CUTI'].map(item => <option key={item} value={item} disabled={item !== 'AT HOSTEL' && approvedMovement?.type !== item}>{item}{item !== 'AT HOSTEL' && approvedMovement?.type !== item ? ' (Perlu kelulusan)' : ''}</option>)}
             </select>
           </label>
 
