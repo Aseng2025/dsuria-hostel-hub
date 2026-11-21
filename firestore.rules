@@ -263,8 +263,7 @@ service cloud.firestore {
           'profilePhotoUrl','profilePhotoPath'
         ])
         && request.resource.data.approvalStatus in ['draft','pending','rejected']
-        && request.resource.data.approvalStatus != 'approved'
-        && (resource.data.approvalStatus != 'approved' || request.resource.data.approvalStatus == 'pending')
+        && (request.resource.data.approvalStatus == resource.data.approvalStatus || request.resource.data.approvalStatus == 'pending')
         && (
           request.resource.data.approvalStatus != 'pending'
           || existsAfter(/databases/$(database)/documents/emergencyContacts/$(studentUid))
