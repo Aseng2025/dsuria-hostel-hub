@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import {
-  addDoc, collection, deleteDoc, doc, getDoc, onSnapshot, query,
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query,
   serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from 'firebase/firestore'
 import {
@@ -881,72 +881,31 @@ function StudentWorkspace({ user, profile, setNotice, initialTab = 'all' }) {
 }
 
 function AdminOverview() {
-  const [students, setStudents] = useState(0)
-  const [admins, setAdmins] = useState(0)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let userRows = []
-    let profileIds = new Set()
-    let usersReady = false
-    let profilesReady = false
-
-    const updateCounts = () => {
-      if (!usersReady || !profilesReady) return
-
-      const activeStudentUids = new Set(
-        userRows
-          .filter(item => item.role === 'student' && item.status === 'active')
-          .map(item => item.uid)
-      )
-
-      setStudents([...profileIds].filter(uid => activeStudentUids.has(uid)).length)
-      setAdmins(
-        userRows.filter(item => item.role === 'admin' && item.status === 'active').length
-      )
-    }
-
-    const stopUsers = onSnapshot(
-      collection(db, 'users'),
-      snapshot => {
-        userRows = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }))
-        usersReady = true
-        updateCounts()
-      },
-      e => setError(friendlyError(e))
-    )
-
-    const stopProfiles = onSnapshot(
-      collection(db, 'studentProfiles'),
-      snapshot => {
-        profileIds = new Set(snapshot.docs.map(item => item.id))
-        profilesReady = true
-        updateCounts()
-      },
-      e => setError(friendlyError(e))
-    )
-
-    return () => {
-      stopUsers()
-      stopProfiles()
-    }
-  }, [])
-
-  return (
-    <section className="grid gap-4 sm:grid-cols-2">
-      <div className="card">
-        <p className="muted">Pelajar aktif</p>
-        <p className="mt-2 text-3xl font-bold text-navy">{students}</p>
-      </div>
-
-      <div className="card">
-        <p className="muted">Admin aktif</p>
-        <p className="mt-2 text-3xl font-bold text-navy">{admins}</p>
-      </div>
-
-      {error && <p className="text-sm text-red-700">{error}</p>}
+  const [hostels,setHostels]=useState([]);
+  const [profiles,setProfiles]=useState([]);
+  const [admins,setAdmins]=useState(0);
+  const [error,setError]=useState('');
+  useEffect(()=>{
+    const h=onSnapshot(collection(db,'hostels'),s=>setHostels(s.docs.map(d=>({id:d.id,...d.data()}))),e=>setError(friendlyError(e)));
+    const p=onSnapshot(collection(db,'studentProfiles'),s=>setProfiles(s.docs.map(d=>({uid:d.id,...d.data()}))),e=>setError(friendlyError(e)));
+    const u=onSnapshot(collection(db,'users'),s=>setAdmins(s.docs.filter(d=>d.data().role==='admin'&&d.data().status==='active').length),e=>setError(friendlyError(e)));
+    return ()=>{h();p();u();};
+  },[]);
+  const active=hostels.filter(h=>h.status==='active');
+  const capacity=active.reduce((n,h)=>n+(Number(h.roomCount)||0)*(Number(h.capacityPerRoom)||0),0);
+  const count=(id,status)=>profiles.filter(p=>p.hostelId===id&&(!status||(p.approvalStatus||'draft')===status)).length;
+  return <div className="space-y-5">
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {[['Jumlah hostel berdaftar',hostels.length],['Hostel aktif',active.length],['Jumlah penghuni',profiles.length],['Kapasiti keseluruhan',capacity]].map(([label,value])=><div className="card" key={label}><p className="muted">{label}</p><p className="mt-2 text-3xl font-bold text-navy">{value}</p></div>)}
     </section>
-  )
+    <section className="card"><div className="flex flex-wrap justify-between gap-2"><h3 className="section-title">Status Penghuni Mengikut Hostel</h3><span className="text-xs text-slate-500">{admins} Admin aktif</span></div>
+      {error&&<p className="mt-3 text-sm text-red-700">{error}</p>}
+      {hostels.length?hostels.map(h=>{const total=count(h.id),cap=(Number(h.roomCount)||0)*(Number(h.capacityPerRoom)||0);return <div key={h.id} className="mt-3 rounded-xl border p-4">
+        <div className="flex flex-wrap justify-between gap-2"><div><b>{h.name}</b><p className="text-xs text-slate-500">{h.status} · {h.roomCount||0} bilik · {h.capacityPerRoom||0} orang/bilik</p></div><b>{total} / {cap} penghuni</b></div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{[['Draft',count(h.id,'draft')],['Pending',count(h.id,'pending')],['Diluluskan',count(h.id,'approved')],['Ditolak',count(h.id,'rejected')]].map(([label,value])=><div key={label} className="rounded-lg bg-slate-50 p-2"><p className="text-xs text-slate-500">{label}</p><p className="text-xl font-bold">{value}</p></div>)}</div>
+      </div>}):<p className="muted mt-3">Belum ada hostel didaftarkan.</p>}
+    </section>
+  </div>;
 }
 
 function AdminManagement({ me, setNotice }) {
