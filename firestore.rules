@@ -260,7 +260,17 @@ service cloud.firestore {
 
     // Student profiles
     match /studentProfiles/{studentUid} {
-      allow read: if canReadStudentRecord(studentUid);
+      // Queryable read scope: Admin may list only profiles whose hostelId
+      // is one of the hostels assigned to the signed-in Admin.
+      allow read: if signedIn() && (
+        request.auth.uid == studentUid
+        || isSuperAdmin()
+        || (
+          isAdmin()
+          && resource.data.hostelId is string
+          && resource.data.hostelId in userData(request.auth.uid).hostelIds
+        )
+      );
 
       allow create: if (
           signedIn()
