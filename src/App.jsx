@@ -30,7 +30,6 @@ const MODULES = [
   { id: 'home-dashboard', title: 'Home Dashboard', desc: 'Ringkasan aktiviti dan makluman hostel', icon: LayoutDashboard, ready: true },
   { id: 'profile', title: 'Student Registration & Profile', desc: 'Pendaftaran, profil, gambar dan status permohonan', icon: UserRound, ready: true },
   { id: 'emergency', title: 'Emergency Contact', desc: 'Maklumat waris dan penjaga', icon: Phone, ready: true },
-  { id: 'attendance', title: 'Class Attendance', desc: 'Rekod kehadiran kelas', icon: CalendarCheck },
   { id: 'outing', title: 'Going Home / Outing Log', desc: 'Rekod keluar, destinasi dan pulang', icon: MapPin },
   { id: 'geofence', title: 'Geofence Monitoring', desc: 'Pengesahan kembali ke kawasan hostel', icon: MapPin },
   { id: 'daily-status', title: 'Daily Student Status', desc: 'Status keberadaan dan pemantauan curfew', icon: Clock },
@@ -288,7 +287,7 @@ export default function App() {
                   </p>
                 </div>
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-                  16 modul
+                  15 modul
                 </span>
               </div>
 
